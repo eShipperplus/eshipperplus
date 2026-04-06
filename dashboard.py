@@ -1237,6 +1237,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 
     _pick_cols = [("Order Code","shipmentordercode"),("Client","clientname"),("Urgency","UrgencyLevel"),("Age","AgeLabel"),("SLA","SLAStatus")]
     _pack_cols = _pick_cols
+    _sla_cols  = [("Order Code","shipmentordercode"),("Client","clientname"),("Order Type","ordertype"),("Urgency","UrgencyLevel"),("Age","AgeLabel"),("SLA","SLAStatus")]
     _os_cols   = [("Order Code","shipmentordercode"),("Client","clientname"),("Status","orderstatus")]
     _td_cols   = [("Order Code","shipmentordercode"),("Client","clientname"),("Status","completionstatus")]
 
@@ -1249,8 +1250,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         "pending_pack": _modal_data(all_pack, _pack_cols, "Pending Pack"),
         "picked_today": _modal_data(today_df[today_df["completionstatus"]=="Fully Picked"] if not today_df.empty else pd.DataFrame(), _td_cols, "Fully Picked Today"),
         "packed_today": _modal_data(today_df[today_df["completionstatus"]=="Fully Packed"] if not today_df.empty else pd.DataFrame(), _td_cols, "Fully Packed Today"),
-        "past_sla":     _modal_data(_all_qs[_all_qs["UrgencyLevel"]=="Past SLA"] if not _all_qs.empty else pd.DataFrame(), _pick_cols, "Past SLA — All Queues"),
-        "breaching_sla":_modal_data(_all_qs[_all_qs["UrgencyLevel"]=="Breaching SLA"] if not _all_qs.empty else pd.DataFrame(), _pick_cols, "Breaching SLA — All Queues"),
+        "past_sla":     _modal_data(_all_qs[_all_qs["UrgencyLevel"]=="Past SLA"] if not _all_qs.empty else pd.DataFrame(), _sla_cols, "Past SLA — All Queues"),
+        "breaching_sla":_modal_data(_all_qs[_all_qs["UrgencyLevel"]=="Breaching SLA"] if not _all_qs.empty else pd.DataFrame(), _sla_cols, "Breaching SLA — All Queues"),
     }
     kpi_data_json = json.dumps(kpi_data)
 
