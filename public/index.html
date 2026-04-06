@@ -394,7 +394,8 @@ document.getElementById('signout-btn').addEventListener('click', async () => {
 
 onAuthStateChanged(firebaseAuth, async (fbUser) => {
   if (fbUser) {
-    state.token = await fbUser.getIdToken();
+    // Force refresh token to avoid stale/invalid token issues
+    state.token = await fbUser.getIdToken(true);
     document.getElementById('signin-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     const name = fbUser.displayName || fbUser.email || '?';
@@ -404,6 +405,11 @@ onAuthStateChanged(firebaseAuth, async (fbUser) => {
     await loadData();
     renderNav();
     renderView();
+
+    // Auto-refresh token every 50 minutes (tokens expire at 60 min)
+    setInterval(async () => {
+      state.token = await fbUser.getIdToken(true);
+    }, 50 * 60 * 1000);
   } else {
     state.user = null;
     document.getElementById('signin-screen').style.display = 'flex';
