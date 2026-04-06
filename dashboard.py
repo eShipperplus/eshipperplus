@@ -6,6 +6,7 @@ Handles D2C, D2B SPD, and D2B LTL picking and packing queues.
 
 SLA Rules:
   D2C  → Spreetail & Marklyn: hard deadline 7:30 PM daily
+          Order codes starting with "AMZ" or "70": same-day pick & pack (7:30 PM deadline)
           All others: 24 hrs from picking completion
           Priority 4: not picked on Mondays
           Locus robot jobs (JobTypeId=137643): excluded from picking queue
@@ -39,7 +40,7 @@ if not (7 <= _now.hour < 20):
 import os
 import pandas as pd
 import snowflake.connector
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta, time as dt_time, date
 import pytz
 import logging
 
@@ -52,12 +53,12 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 
 SNOWFLAKE = {
-    "user":      os.environ["SNOWFLAKE_USER"],
-    "password":  os.environ["SNOWFLAKE_PASSWORD"],
-    "account":   os.environ["SNOWFLAKE_ACCOUNT"],
-    "warehouse": os.environ["SNOWFLAKE_WAREHOUSE"],
-    "database":  os.environ["SNOWFLAKE_DATABASE"],
-    "schema":    os.environ["SNOWFLAKE_SCHEMA"],
+    "user":      os.environ.get("SNOWFLAKE_USER",      "eshipper_admin"),
+    "password":  os.environ.get("SNOWFLAKE_PASSWORD",  "HdWV6MpeDMW@uyG!"),
+    "account":   os.environ.get("SNOWFLAKE_ACCOUNT",   "jra25860.east-us-2.azure"),
+    "warehouse": os.environ.get("SNOWFLAKE_WAREHOUSE", "ESHIPPER_READER_WH"),
+    "database":  os.environ.get("SNOWFLAKE_DATABASE",  "IUTDGKJ_DEA90311_ESHIPPER_DIRECT_SHARE"),
+    "schema":    os.environ.get("SNOWFLAKE_SCHEMA",    "ESHIPPER_SCHEMA"),
 }
 
 _BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
@@ -71,11 +72,9 @@ HARD_DEADLINE = dt_time(19, 30)         # 7:30 PM  (Spreetail / Marklyn cutoff)
 
 # D2C — clients with a hard daily shipping deadline (lowercase, partial match)
 DEADLINE_CLIENTS    = ["spreetail", "marklyn"]
-D2C_SLA_HRS         = 22   # 2 full working days (11 hrs × 2)
-
-# D2B SLAs in WORKING hours (11 hrs/day × days)
-D2B_SPD_SLA_HRS     = 44   # 48 calendar hrs ≈ 4 working days (44 working hrs)
-D2B_LTL_SLA_HRS     = 44   # 48 calendar hrs ≈ 4 working days (44 working hrs)
+D2C_SLA_HRS         = 24   # 24 calendar hours from allocation
+D2B_SPD_SLA_HRS     = 48   # 48 calendar hours from allocation
+D2B_LTL_SLA_HRS     = 48   # 48 calendar hours from allocation
 
 # Locus robot job type — differentiated in D2C picking queue
 LOCUS_JOB_TYPE_ID   = 137643
@@ -337,38 +336,26 @@ GROUP BY
 def _open_shortage_sql():
     """
     Open (StatusId=6) and Shortage (StatusId=2) orders for warehouse 26771.
-    Includes order type, client, allocation date and picking task creation date.
+    Simple distinct order count per client — no task joins.
     """
     return f"""
 SELECT
     so.Id                                   AS ShipmentOrderId,
     so.Code                                 AS ShipmentOrderCode,
     COALESCE(c.FullName, c.DisplayName)     AS ClientName,
-    c.DisplayName                           AS ClientDisplayName,
-    sot.Name                                AS OrderType,
-    sos.Name                                AS OrderStatus,
-    so.ShipmentOrderDate                    AS AllocationDate,
-    MIN(wt.CreatedDateTime)                 AS PickTaskCreatedAt,
-    so.WarehouseId
+    sos.Name                                AS OrderStatus
 
 FROM {DB}.SHIPMENTORDER                     so
-INNER JOIN {DB}.SHIPMENTORDERTYPE           sot ON so.ShipmentOrderTypeId  = sot.Id
-INNER JOIN {DB}.CLIENT                      c   ON so.ClientId             = c.Id   AND c.Deleted = 0
+INNER JOIN {DB}.CLIENT                      c   ON so.ClientId              = c.Id  AND c.Deleted = 0
 INNER JOIN {DB}.SHIPMENTORDERSTATUS         sos ON so.ShipmentOrderStatusId = sos.Id
-LEFT  JOIN {DB}.WAREHOUSETASK               wt  ON so.Id = wt.ShipmentOrderId
-                                                AND wt.WarehouseTaskTypeId  = 1
-                                                AND wt.WarehouseId          = 26771
-                                                AND wt.Deleted              = 0
 
 WHERE so.WarehouseId                        = 26771
   AND so.ShipmentOrderStatusId              IN (2, 6)
   AND so.Deleted                            = 0
+  AND so.ActualShipmentDate                 IS NULL
   AND COALESCE(c.FullName, c.DisplayName)   NOT ILIKE '%test%'
-
-GROUP BY
-    so.Id, so.Code,
-    COALESCE(c.FullName, c.DisplayName), c.DisplayName,
-    sot.Name, sos.Name, so.ShipmentOrderDate, so.WarehouseId
+  AND (so.ShipmentOrderStatusId != 6
+       OR so.ShipmentOrderDate  >= DATEADD(day, -30, CURRENT_DATE))
 """
 
 
@@ -376,10 +363,10 @@ def _hourly_today_sql():
     """Picks and packs by hour for today, per client — for the hourly breakdown chart."""
     return f"""
 SELECT
-    HOUR(wt.ActualFinishDateTime)                           AS hour,
-    CASE wt.WarehouseTaskTypeId WHEN 1 THEN 'Picking' ELSE 'Packing' END AS activitytype,
-    COALESCE(c.FullName, c.DisplayName)                     AS clientname,
-    COUNT(DISTINCT wt.ShipmentOrderId)                      AS orders
+    HOUR(CONVERT_TIMEZONE('UTC', 'America/Toronto', wt.ActualFinishDateTime))  AS hour,
+    CASE wt.WarehouseTaskTypeId WHEN 1 THEN 'Picking' ELSE 'Packing' END       AS activitytype,
+    COALESCE(c.FullName, c.DisplayName)                                         AS clientname,
+    COUNT(DISTINCT wt.ShipmentOrderId)                                          AS orders
 
 FROM {DB}.WAREHOUSETASK                                     wt
 INNER JOIN {DB}.SHIPMENTORDER                               so  ON wt.ShipmentOrderId = so.Id AND so.Deleted = 0
@@ -388,7 +375,7 @@ INNER JOIN {DB}.CLIENT                                      c   ON so.ClientId  
 WHERE wt.WarehouseTaskTypeId    IN (1, 6)
   AND wt.WarehouseTaskStatusId  = 3
   AND wt.WarehouseId            = 26771
-  AND DATE(wt.ActualFinishDateTime) = CURRENT_DATE
+  AND DATE(CONVERT_TIMEZONE('UTC', 'America/Toronto', wt.ActualFinishDateTime)) = DATE(CONVERT_TIMEZONE('America/Toronto', CURRENT_TIMESTAMP()))
   AND wt.Deleted                = 0
   AND COALESCE(c.FullName, c.DisplayName) NOT ILIKE '%test%'
 
@@ -605,12 +592,22 @@ def match_priority(client_name, priority_df):
 # URGENCY SCORING
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _working_hours_elapsed(ref_time, now, tz):
+STAT_HOLIDAYS = {
+    date(2026, 4, 4),   # Good Friday
+    date(2026, 5, 18),  # Victoria Day
+    date(2026, 7, 1),   # Canada Day
+    date(2026, 8, 3),   # Civic Holiday
+    date(2026, 9, 7),   # Labour Day
+    date(2026, 10, 12), # Thanksgiving
+    date(2026, 12, 25), # Christmas
+    date(2026, 12, 26), # Boxing Day
+}
+
+def _calendar_hours_elapsed(ref_time, now, tz):
     """
-    Calculate WORKING hours elapsed between ref_time and now.
-    Working days : Monday – Friday  (weekday() 0–4)
-    Working hours: WORKDAY_START (7 AM) – WORKDAY_END (6 PM)
-    Weekend hours and out-of-window hours are ignored.
+    Calendar hours elapsed between ref_time and now.
+    Excludes weekends (Sat/Sun) and stat holidays.
+    All 24 hours of valid business days count.
     """
     if pd.isna(ref_time):
         return 0.0
@@ -623,15 +620,13 @@ def _working_hours_elapsed(ref_time, now, tz):
     cursor = ref_time
 
     while cursor.date() <= now.date():
-        if cursor.weekday() < 5:                          # Mon–Fri only
-            day_start = tz.localize(datetime.combine(cursor.date(), WORKDAY_START))
-            day_end   = tz.localize(datetime.combine(cursor.date(), WORKDAY_END))
-            window_start = max(cursor, day_start)
-            window_end   = min(now,    day_end)
+        if cursor.weekday() < 5 and cursor.date() not in STAT_HOLIDAYS:
+            day_end      = tz.localize(datetime.combine(cursor.date(), dt_time(23, 59, 59)))
+            window_start = cursor
+            window_end   = min(now, day_end)
             if window_end > window_start:
                 total += (window_end - window_start).total_seconds() / 3600
 
-        # Advance to start of next calendar day
         next_day = cursor.date() + timedelta(days=1)
         cursor   = tz.localize(datetime.combine(next_day, dt_time(0, 0)))
 
@@ -680,17 +675,25 @@ def _d2c_urgency(row, now, tz, ref_col, is_picking=False):
     at_risk_pct  = 0.50 if is_picking else 0.75
     critical_pct = 0.75 if is_picking else 1.0
 
-    is_dl       = any(kw in str(row["clientname"]).lower() for kw in DEADLINE_CLIENTS)
-    deadline_dt = tz.localize(datetime.combine(now.date(), HARD_DEADLINE))
-    remaining   = (deadline_dt - now).total_seconds() / 3600
+    order_code  = str(row.get("shipmentordercode", ""))
+    is_dl       = (any(kw in str(row["clientname"]).lower() for kw in DEADLINE_CLIENTS)
+                   or order_code.upper().startswith("AMZ")
+                   or order_code.startswith("70"))
 
     if is_dl:
-        workday_start_dt = tz.localize(datetime.combine(now.date(), WORKDAY_START))
+        # Deadline is 7:30 PM on the allocation day — if that day has passed, order is Past SLA
+        try:
+            alloc_date = pd.Timestamp(row[ref_col]).date()
+        except Exception:
+            alloc_date = now.date()
+        deadline_dt      = tz.localize(datetime.combine(alloc_date, HARD_DEADLINE))
+        remaining        = (deadline_dt - now).total_seconds() / 3600
+        workday_start_dt = tz.localize(datetime.combine(alloc_date, WORKDAY_START))
         elapsed  = max(0.0, (now - workday_start_dt).total_seconds() / 3600)
         score, level, status = _urgency(elapsed, D2C_SLA_HRS, is_deadline=True, remaining_hrs=remaining)
         sla_type = "Hard Deadline (7:30 PM)"
     else:
-        elapsed  = _working_hours_elapsed(row[ref_col], now, tz)
+        elapsed  = _calendar_hours_elapsed(row[ref_col], now, tz)
         score, level, status = _urgency(elapsed, D2C_SLA_HRS,
                                         at_risk_pct=at_risk_pct, critical_pct=critical_pct)
         sla_type = "24hr SLA"
@@ -705,7 +708,7 @@ def _d2b_urgency(row, now, tz, sla_hrs, is_picking=False):
     """
     at_risk_pct  = 0.50 if is_picking else 0.75
     critical_pct = 0.75 if is_picking else 1.0
-    elapsed = _working_hours_elapsed(row["allocationdate"], now, tz)
+    elapsed = _calendar_hours_elapsed(row["allocationdate"], now, tz)
     score, level, status = _urgency(elapsed, sla_hrs,
                                     at_risk_pct=at_risk_pct, critical_pct=critical_pct)
     return score, level, status, f"{sla_hrs}hr SLA"
@@ -899,9 +902,10 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                 "Breaching SLA":"background:rgba(217,119,6,0.14);",
                 "On Track":"background:rgba(22,163,74,0.07);"}.get(str(level),"")
 
-    def kpi(val, lbl, color="#3b82f6", sub=""):
+    def kpi(val, lbl, color="#3b82f6", sub="", onclick=""):
         sub_h = f'<div class="kpi-sub">{esc(sub)}</div>' if sub else ""
-        return (f'<div class="kpi-card" style="border-top:3px solid {color}">'
+        extra = ' class="kpi-card clickable" onclick="'+onclick+'"' if onclick else ' class="kpi-card"'
+        return (f'<div{extra} style="border-top:3px solid {color}">'
                 f'<div class="kpi-val" style="color:{color}">{esc(str(val))}</div>'
                 f'<div class="kpi-lbl">{esc(lbl)}</div>{sub_h}</div>')
 
@@ -971,7 +975,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                   "tooltip:{callbacks:{label:function(c){return c.dataset.label+': '+c.raw+' orders';}}}"
                 "},"
                 "scales:{"
-                  "x:{stacked:true,ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,0.04)'},beginAtZero:true},"
+                  "x:{stacked:true,ticks:{color:'#64748b'},grid:{color:'rgba(0,0,0,0.06)'},beginAtZero:true},"
                   "y:{stacked:true,ticks:{color:'#94a3b8',font:{size:12}},grid:{display:false}}"
                 "}"
               "}"
@@ -1049,8 +1053,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       interaction: {{mode:'index', intersect:false}},
       plugins: {{legend: {{labels: {{color:'#94a3b8'}}}}}},
       scales: {{
-        x: {{ticks:{{color:'#64748b',font:{{size:10}}}}, grid:{{color:'rgba(255,255,255,0.04)'}}}},
-        y: {{ticks:{{color:'#64748b'}}, grid:{{color:'rgba(255,255,255,0.04)'}}, beginAtZero:true}}
+        x: {{ticks:{{color:'#64748b',font:{{size:10}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}}},
+        y: {{ticks:{{color:'#64748b'}}, grid:{{color:'rgba(0,0,0,0.06)'}}, beginAtZero:true}}
       }}
     }}
   }});
@@ -1087,8 +1091,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       {{label:"Packed",data:{pa},borderColor:"#3b82f6",backgroundColor:"rgba(59,130,246,0.1)",tension:0.3,fill:true,pointRadius:3}}
     ]}},options:{{responsive:true,interaction:{{mode:"index",intersect:false}},
       plugins:{{legend:{{labels:{{color:"#94a3b8"}}}}}},
-      scales:{{x:{{ticks:{{color:"#64748b",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(255,255,255,0.04)"}}}},
-               y:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(255,255,255,0.04)"}},beginAtZero:true}}}}
+      scales:{{x:{{ticks:{{color:"#64748b",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(0,0,0,0.06)"}}}},
+               y:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}
     }}}});
   new Chart(document.getElementById("tType").getContext("2d"),{{type:"bar",
     data:{{labels:L,datasets:[
@@ -1097,8 +1101,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       {{label:"LTL",data:{ltl},backgroundColor:"rgba(249,115,22,0.7)",stack:"s"}}
     ]}},options:{{responsive:true,interaction:{{mode:"index",intersect:false}},
       plugins:{{legend:{{labels:{{color:"#94a3b8"}}}}}},
-      scales:{{x:{{stacked:true,ticks:{{color:"#64748b",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(255,255,255,0.04)"}}}},
-               y:{{stacked:true,ticks:{{color:"#64748b"}},grid:{{color:"rgba(255,255,255,0.04)"}},beginAtZero:true}}}}
+      scales:{{x:{{stacked:true,ticks:{{color:"#64748b",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(0,0,0,0.06)"}}}},
+               y:{{stacked:true,ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}
     }}}});
 }})();</script>"""
 
@@ -1124,8 +1128,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                 f'{{label:"Packed",data:{pav},backgroundColor:"rgba(59,130,246,0.75)",borderRadius:4}}]}},'
                 f'options:{{responsive:true,interaction:{{mode:"index",intersect:false}},'
                 f'plugins:{{legend:{{labels:{{color:"#94a3b8"}}}}}},'
-                f'scales:{{x:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(255,255,255,0.04)"}}}},'
-                f'y:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(255,255,255,0.04)"}},beginAtZero:true}}}}}}}}}})();</script>')
+                f'scales:{{x:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}}}},'
+                f'y:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}}}}}}})();</script>')
 
     # ── Aggregate ─────────────────────────────────────────────────────────────
     frames_pick = [f for f in [d2c_pick,spd_pick,ltl_pick] if not f.empty]
@@ -1217,25 +1221,51 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                 f'<div class="tbl-wrap"><table class="qtable"><thead>{hdr}</thead>'
                 f'<tbody>{rows}</tbody></table></div>')
 
-    if not open_shortage_df.empty:
-        open_shortage_df = open_shortage_df.copy()
-        age_src = open_shortage_df["picktaskcreatedat"].where(
-            open_shortage_df["picktaskcreatedat"].notna(),
-            open_shortage_df["allocationdate"]
-        )
-        open_shortage_df["AgeLabel"] = age_src.apply(lambda t: _age_label(t, now))
+    # open_shortage_df: simple Id/Code/ClientName/OrderStatus — no age calc needed
 
     n_open     = int(open_shortage_df[open_shortage_df["orderstatus"] == "Open"]["shipmentorderid"].nunique())     if not open_shortage_df.empty else 0
     n_shortage = int(open_shortage_df[open_shortage_df["orderstatus"] == "Shortage"]["shipmentorderid"].nunique()) if not open_shortage_df.empty else 0
+
+    # ── KPI modal data ────────────────────────────────────────────────────────
+    def _modal_data(df, cols, title):
+        """Serialize df rows for JS modal. cols = list of (label, df_col)."""
+        if df.empty: return {"title": title, "cols": [c[0] for c in cols], "rows": []}
+        rows = []
+        for _, r in _dedup_orders(df).iterrows() if "shipmentordercode" in df.columns else df.iterrows():
+            rows.append([_html.escape(str(r.get(c[1], "") or "")) for c in cols])
+        return {"title": title, "cols": [c[0] for c in cols], "rows": rows}
+
+    _pick_cols = [("Order Code","shipmentordercode"),("Client","clientname"),("Urgency","UrgencyLevel"),("Age","AgeLabel"),("SLA","SLAStatus")]
+    _pack_cols = _pick_cols
+    _os_cols   = [("Order Code","shipmentordercode"),("Client","clientname"),("Status","orderstatus")]
+    _td_cols   = [("Order Code","shipmentordercode"),("Client","clientname"),("Status","completionstatus")]
+
+    _all_qs = pd.concat([f for f in [all_pick,all_pack] if not f.empty],ignore_index=True) if any(not f.empty for f in [all_pick,all_pack]) else pd.DataFrame()
+
+    kpi_data = {
+        "open":         _modal_data(open_shortage_df[open_shortage_df["orderstatus"]=="Open"]  if not open_shortage_df.empty else pd.DataFrame(), _os_cols,  "Open Orders"),
+        "shortage":     _modal_data(open_shortage_df[open_shortage_df["orderstatus"]=="Shortage"] if not open_shortage_df.empty else pd.DataFrame(), _os_cols, "Shortage Orders"),
+        "pending_pick": _modal_data(all_pick, _pick_cols, "Pending Pick"),
+        "pending_pack": _modal_data(all_pack, _pack_cols, "Pending Pack"),
+        "picked_today": _modal_data(today_df[today_df["completionstatus"]=="Fully Picked"] if not today_df.empty else pd.DataFrame(), _td_cols, "Fully Picked Today"),
+        "packed_today": _modal_data(today_df[today_df["completionstatus"]=="Fully Packed"] if not today_df.empty else pd.DataFrame(), _td_cols, "Fully Packed Today"),
+        "past_sla":     _modal_data(_all_qs[_all_qs["UrgencyLevel"]=="Past SLA"] if not _all_qs.empty else pd.DataFrame(), _pick_cols, "Past SLA — All Queues"),
+        "breaching_sla":_modal_data(_all_qs[_all_qs["UrgencyLevel"]=="Breaching SLA"] if not _all_qs.empty else pd.DataFrame(), _pick_cols, "Breaching SLA — All Queues"),
+    }
+    kpi_data_json = json.dumps(kpi_data)
 
     # ── Tab content ───────────────────────────────────────────────────────────
     overview = f"""
 <div class="section-title">Live Queue Snapshot</div>
 <div class="kpi-row">
-  {kpi(tot_pick,"Pending Pick (Orders)","#8b5cf6")}{kpi(tot_pack,"Pending Pack (Orders)","#0ea5e9")}
-  {kpi(pp+ppa,"Past SLA (All)","#dc2626")}{kpi(bp+bpa,"Breaching SLA","#d97706")}
-  {kpi(td_fp,"Fully Picked Today","#22c55e")}{kpi(td_fa,"Fully Packed Today","#3b82f6")}
-  {kpi(n_open,"Open Orders","#0ea5e9")}{kpi(n_shortage,"Shortage Orders","#dc2626")}
+  {kpi(n_open,"Open Orders","#0ea5e9",onclick="showKpi('open')")}
+  {kpi(n_shortage,"Shortage Orders","#dc2626",onclick="showKpi('shortage')")}
+  {kpi(tot_pick,"Pending Pick (Orders)","#8b5cf6",onclick="showKpi('pending_pick')")}
+  {kpi(td_fp,"Fully Picked Today","#22c55e",onclick="showKpi('picked_today')")}
+  {kpi(tot_pack,"Pending Pack (Orders)","#0ea5e9",onclick="showKpi('pending_pack')")}
+  {kpi(td_fa,"Fully Packed Today","#3b82f6",onclick="showKpi('packed_today')")}
+  {kpi(pp+ppa,"Past SLA (All)","#dc2626",onclick="showKpi('past_sla')")}
+  {kpi(bp+bpa,"Breaching SLA","#d97706",onclick="showKpi('breaching_sla')")}
 </div>
 <div class="chart-row" style="margin-top:1.5rem">
   {urgency_chart(all_pick, all_pack)}
@@ -1269,7 +1299,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 <div class="kpi-row">
   {kpi(ocnt(d2c_pick),"Pending Pick","#8b5cf6")}{kpi(ocnt(d2c_pick,"UrgencyLevel","Past SLA"),"Past SLA","#dc2626")}
   {kpi(ocnt(d2c_pick,"UrgencyLevel","Breaching SLA"),"Breaching SLA","#d97706")}{kpi(ocnt(d2c_pick,"UrgencyLevel","On Track"),"On Track","#16a34a")}
-  {kpi(td_pk_d2c,"Fully Picked Today","#22c55e")}{kpi(cnt(d2c_pick,"pickingtype","Locus (Robot)"),"Locus Tasks","#8b5cf6")}
+  {kpi(td_pk_d2c,"Fully Picked Today","#22c55e")}{kpi(ocnt(d2c_pick,"pickingtype","Locus (Robot)"),"Locus Tasks","#8b5cf6")}
 </div>
 {client_pivot(d2c_pick,"D2C Picking \u2014 by Client")}
 <div class="section-title" style="margin-top:1.2rem">Full Queue</div>
@@ -1324,57 +1354,89 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#0f172a;color:#e2e8f0;font-family:"Segoe UI",system-ui,sans-serif;font-size:.875rem}}
-.topbar{{background:#1e293b;border-bottom:1px solid #334155;padding:.6rem 1.4rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200}}
-.topbar h1{{font-size:1rem;font-weight:700;color:#f8fafc}}
-.topbar .meta{{color:#64748b;font-size:.8rem}} .topbar .meta strong{{color:#94a3b8}}
-#cd{{color:#22c55e;font-weight:700}}
-.nav-tabs{{background:#1e293b;border-bottom:1px solid #334155;padding:0 1rem;overflow-x:auto;flex-wrap:nowrap;display:flex}}
+body{{background:#f1f5f9;color:#1e293b;font-family:"Segoe UI",system-ui,sans-serif;font-size:.875rem}}
+.topbar{{background:#ffffff;border-bottom:1px solid #e2e8f0;padding:.6rem 1.4rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;box-shadow:0 1px 4px rgba(0,0,0,0.06)}}
+.topbar h1{{font-size:1rem;font-weight:700;color:#0f172a}}
+.topbar .meta{{color:#64748b;font-size:.8rem}} .topbar .meta strong{{color:#475569}}
+#cd{{color:#16a34a;font-weight:700}}
+.nav-tabs{{background:#ffffff;border-bottom:1px solid #e2e8f0;padding:0 1rem;overflow-x:auto;flex-wrap:nowrap;display:flex}}
 .nav-tabs .nav-link{{color:#64748b;border:none;border-bottom:2px solid transparent;padding:.5rem .85rem;font-size:.8rem;white-space:nowrap}}
-.nav-tabs .nav-link.active{{color:#f1f5f9;border-bottom-color:#3b82f6;background:transparent;font-weight:600}}
-.nav-tabs .nav-link:hover{{color:#cbd5e1}}
-.cnt{{background:#334155;color:#94a3b8;font-size:.68rem;padding:.1em .45em;border-radius:10px;margin-left:.3rem}}
+.nav-tabs .nav-link.active{{color:#1e293b;border-bottom-color:#3b82f6;background:transparent;font-weight:600}}
+.nav-tabs .nav-link:hover{{color:#334155}}
+.cnt{{background:#e2e8f0;color:#475569;font-size:.68rem;padding:.1em .45em;border-radius:10px;margin-left:.3rem}}
 .tab-inner{{padding:1.4rem 1.2rem}}
 .kpi-row{{display:flex;gap:.9rem;flex-wrap:wrap;margin-bottom:.8rem}}
-.kpi-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:1.1rem 1.4rem;min-width:130px;flex:1}}
+.kpi-card{{background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:1.1rem 1.4rem;min-width:130px;flex:1;box-shadow:0 1px 3px rgba(0,0,0,0.05)}}
+.kpi-card.clickable{{cursor:pointer;transition:box-shadow .15s,transform .1s}}
+.kpi-card.clickable:hover{{box-shadow:0 4px 14px rgba(0,0,0,0.12);transform:translateY(-2px)}}
 .kpi-val{{font-size:2.1rem;font-weight:800;line-height:1.1}}
 .kpi-lbl{{font-size:.72rem;color:#64748b;margin-top:.3rem;text-transform:uppercase;letter-spacing:.06em}}
-.kpi-sub{{font-size:.72rem;color:#475569;margin-top:.2rem}}
-.section-title{{font-size:.78rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.6rem;padding-bottom:.3rem;border-bottom:1px solid #1e293b}}
+.kpi-sub{{font-size:.72rem;color:#94a3b8;margin-top:.2rem}}
+.section-title{{font-size:.78rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.6rem;padding-bottom:.3rem;border-bottom:1px solid #e2e8f0}}
 .chart-row{{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}}
-.chart-box{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:1rem 1.2rem;flex:1;min-width:250px}}
+.chart-box{{background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.2rem;flex:1;min-width:250px;box-shadow:0 1px 3px rgba(0,0,0,0.05)}}
 .chart-box.wide{{flex:2;min-width:380px}}
-.chart-title{{font-size:.73rem;font-weight:600;color:#94a3b8;margin-bottom:.6rem;text-transform:uppercase;letter-spacing:.05em}}
+.chart-title{{font-size:.73rem;font-weight:600;color:#64748b;margin-bottom:.6rem;text-transform:uppercase;letter-spacing:.05em}}
 .pivot-row{{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}}
 .pivot-col{{flex:1;min-width:280px}}
-.pivot-title{{font-size:.73rem;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem}}
-.tbl-wrap{{overflow-x:auto;border-radius:8px;border:1px solid #334155}}
-.qtable{{width:100%;border-collapse:collapse;background:#1e293b}}
-.qtable thead th{{background:#0f172a;color:#64748b;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;padding:.5rem .65rem;border-bottom:1px solid #334155;white-space:nowrap;position:sticky;top:0}}
-.qtable tbody td{{padding:.4rem .65rem;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle;white-space:nowrap;color:#cbd5e1}}
+.pivot-title{{font-size:.73rem;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem}}
+.tbl-wrap{{overflow-x:auto;border-radius:8px;border:1px solid #e2e8f0}}
+.qtable{{width:100%;border-collapse:collapse;background:#ffffff}}
+.qtable thead th{{background:#f8fafc;color:#64748b;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;padding:.5rem .65rem;border-bottom:1px solid #e2e8f0;white-space:nowrap;position:sticky;top:0}}
+.qtable tbody td{{padding:.4rem .65rem;border-bottom:1px solid #f1f5f9;vertical-align:middle;white-space:nowrap;color:#334155}}
 .qtable tbody tr:last-child td{{border-bottom:none}}
-.qtable tbody tr:hover{{filter:brightness(1.12)}}
+.qtable tbody tr:hover{{background:#f8fafc}}
 .badge{{font-size:.69rem;font-weight:600;padding:.2em .5em;border-radius:4px}}
-.empty{{color:#475569;font-style:italic;padding:.6rem 0;font-size:.82rem}}
-.table-note{{font-size:.7rem;color:#475569;margin-top:.3rem;text-align:right}}
+.empty{{color:#94a3b8;font-style:italic;padding:.6rem 0;font-size:.82rem}}
+.table-note{{font-size:.7rem;color:#94a3b8;margin-top:.3rem;text-align:right}}
 </style>
 </head>
 <body>
 <div class="topbar">
   <div style="display:flex;align-items:center;gap:.85rem">
-    <img src="data:image/png;base64,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" height="36" style="display:block" alt="eShipper+"/>
-    <div style="line-height:1.25">
-      <div style="font-size:1.15rem;font-weight:800;color:#f1f5f9;letter-spacing:-.02em">eShipper<span style="color:#22d3ee">+</span></div>
-      <div style="font-size:.68rem;color:#64748b;letter-spacing:.1em;text-transform:uppercase;font-weight:600">WMS Dashboard</div>
+    <div style="line-height:1.2">
+      <div style="font-size:1.2rem;font-weight:800;color:#1d4ed8;letter-spacing:-.02em">eShipper<span style="color:#0ea5e9">+</span></div>
+      <div style="font-size:.75rem;font-weight:700;color:#334155;letter-spacing:.08em;text-transform:uppercase">WMS Dashboard</div>
     </div>
   </div>
   <div class="meta">Last updated: <strong>{ts}</strong>&nbsp;&nbsp;Refreshes in <strong><span id="cd"></span></strong></div>
 </div>
 <ul class="nav nav-tabs">{nav}</ul>
 <div class="tab-content">{content}</div>
+<div class="modal fade" id="kpiModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content" style="border:1px solid #e2e8f0">
+      <div class="modal-header" style="background:#f8fafc;border-bottom:1px solid #e2e8f0;padding:.75rem 1rem">
+        <h6 class="modal-title fw-bold" id="kpiModalTitle" style="color:#1e293b;font-size:.9rem"></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0" id="kpiModalBody"></div>
+    </div>
+  </div>
+</div>
 <script>
+var KPI_DATA={kpi_data_json};
+function showKpi(key){{
+  var d=KPI_DATA[key];if(!d)return;
+  document.getElementById('kpiModalTitle').textContent=d.title+' ('+d.rows.length+' orders)';
+  var urg={{"Past SLA":"#dc2626","Breaching SLA":"#d97706","On Track":"#16a34a"}};
+  var th='<tr>'+d.cols.map(function(c){{return'<th>'+c+'</th>';}}).join('')+'</tr>';
+  var tb=d.rows.map(function(r){{
+    var cells=r.map(function(v,i){{
+      if(d.cols[i]==='Urgency'){{
+        var col=urg[v]||'#64748b';
+        return'<td><span class="badge" style="background:'+col+';color:#fff">'+v+'</span></td>';
+      }}
+      return'<td>'+v+'</td>';
+    }}).join('');
+    return'<tr>'+cells+'</tr>';
+  }}).join('');
+  document.getElementById('kpiModalBody').innerHTML=
+    '<div style="overflow-x:auto"><table class="qtable" style="width:100%"><thead>'+th+'</thead><tbody>'+tb+'</tbody></table></div>';
+  new bootstrap.Modal(document.getElementById('kpiModal')).show();
+}}
 var s={REFRESH_SECS};
-function tick(){{s--;if(s<=0){{location.reload();return;}}var m=Math.floor(s/60),sc=s%60;document.getElementById("cd").textContent=m+":"+(sc<10?"0":"")+sc;}}
+function tick(){{s--;if(s<=0){{location.href=location.pathname+"?t="+Date.now();return;}}var m=Math.floor(s/60),sc=s%60;document.getElementById("cd").textContent=m+":"+(sc<10?"0":"")+sc;}}
 setInterval(tick,1000);tick();
 var k="wms_tab";var sv=localStorage.getItem(k);
 if(sv){{var el=document.querySelector('[href="#'+sv+'"]');if(el)new bootstrap.Tab(el).show();}}
@@ -1505,8 +1567,8 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(el){{el.add
       responsive:true, interaction:{{ mode:'index', intersect:false }},
       plugins:{{ legend:{{ labels:{{ color:'#e2e8f0' }} }} }},
       scales:{{
-        x:{{ ticks:{{ color:'#94a3b8', maxRotation:45 }}, grid:{{ color:'rgba(255,255,255,0.05)' }} }},
-        y:{{ ticks:{{ color:'#94a3b8' }}, grid:{{ color:'rgba(255,255,255,0.05)' }}, beginAtZero:true }}
+        x:{{ ticks:{{ color:'#94a3b8', maxRotation:45 }}, grid:{{ color:'rgba(0,0,0,0.06)' }} }},
+        y:{{ ticks:{{ color:'#94a3b8' }}, grid:{{ color:'rgba(0,0,0,0.06)' }}, beginAtZero:true }}
       }}
     }}
   }});
@@ -1586,10 +1648,10 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(el){{el.add
   .qtable thead th {{ background:#0f172a; color:#94a3b8; font-size:.75rem; text-transform:uppercase;
                       letter-spacing:.06em; padding:.55rem .7rem; border-bottom:1px solid #334155;
                       white-space:nowrap; position:sticky; top:0; }}
-  .qtable tbody td {{ padding:.45rem .7rem; border-bottom:1px solid rgba(255,255,255,0.04);
+  .qtable tbody td {{ padding:.45rem .7rem; border-bottom:1px solid rgba(0,0,0,0.06);
                        vertical-align:middle; white-space:nowrap; }}
   .qtable tbody tr:last-child td {{ border-bottom:none; }}
-  .qtable tbody tr:hover {{ background:rgba(255,255,255,0.04) !important; }}
+  .qtable tbody tr:hover {{ background:rgba(0,0,0,0.06) !important; }}
   .badge {{ font-size:.73rem; font-weight:600; padding:.25em .6em; border-radius:4px; }}
   .empty-msg {{ color:#64748b; font-style:italic; margin-top:1rem; }}
 </style>
@@ -1787,9 +1849,9 @@ def main():
     logger.info(f"  → HTML dashboard written → {html_path}")
 
     # ── GitHub Pages deploy ───────────────────────────────────────────────────
-    GH_TOKEN    = os.environ["GH_PAT"]
-    GH_USER     = "kareenagupta-glitch"
-    GH_REPO     = "wms-dashboard"
+    GH_TOKEN    = os.environ.get("GH_PAT", "")
+    GH_USER     = "eshipperplus"
+    GH_REPO     = "eshipperplus"
     GH_URL      = f"https://{GH_USER}.github.io/{GH_REPO}/"
     try:
         import base64, requests as _req
