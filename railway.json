@@ -1,0 +1,7 @@
+{
+  "$schema": "https://schema.railway.com/railway.schema.json",
+  "deploy": {
+    "cronSchedule": "*/15 * * * 1-5",
+    "startCommand": "python dashboard.py"
+  }
+}
