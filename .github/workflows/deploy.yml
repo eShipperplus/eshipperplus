@@ -11,4 +11,4 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
-      - run: gcloud builds submit --config cloudbuild.yaml --project ${{ secrets.GCP_PROJECT_ID }}
+      - run: gcloud builds submit --config cloudbuild.yaml --project ${{ secrets.GCP_PROJECT_ID }} --suppress-logs
