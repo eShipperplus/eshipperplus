@@ -389,6 +389,9 @@ document.getElementById('google-signin-btn').addEventListener('click', async () 
 });
 
 document.getElementById('signout-btn').addEventListener('click', async () => {
+  localStorage.removeItem('wh_role');
+  localStorage.removeItem('wh_uid');
+  localStorage.removeItem('wh_name');
   await signOut(firebaseAuth);
 });
 
@@ -422,6 +425,10 @@ async function loadData() {
   try {
     const d = await apiFetch('/api/init');
     state.user = d.user;
+    // Cache role in localStorage so it survives token errors
+    if (d.user?.role) localStorage.setItem('wh_role', d.user.role);
+    if (d.user?.uid) localStorage.setItem('wh_uid', d.user.uid);
+    if (d.user?.displayName) localStorage.setItem('wh_name', d.user.displayName);
     state.data.jobs = d.jobs || [];
     state.data.customers = d.customers || [];
     state.data.jobTypes = d.jobTypes || [];
@@ -430,7 +437,16 @@ async function loadData() {
     state.data.users = d.users || [];
     state.data.teams = d.teams || [];
   } catch (e) {
-    toast('Failed to load data: ' + e.message, 3000);
+    // Restore from cache if available
+    const cachedRole = localStorage.getItem('wh_role');
+    const cachedUid = localStorage.getItem('wh_uid');
+    const cachedName = localStorage.getItem('wh_name');
+    if (cachedRole && cachedUid) {
+      state.user = { role: cachedRole, uid: cachedUid, displayName: cachedName || '' };
+      toast('Loaded from cache — some data may be outdated', 3000);
+    } else {
+      toast('Failed to load data: ' + e.message, 3000);
+    }
   }
 }
 
