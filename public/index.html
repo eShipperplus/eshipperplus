@@ -144,6 +144,10 @@ tr:hover td { background: #f0f4ff; }
 .filter-row .form-group { margin-bottom: 0; min-width: 150px; }
 .profit-bar-wrap { background: var(--grey); border-radius: 4px; height: 8px; overflow: hidden; }
 .profit-bar { height: 100%; border-radius: 4px; }
+.field-row { display:flex; gap:6px; align-items:center; margin-bottom:8px; padding:8px; background:#f7f8fc; border-radius:6px; flex-wrap:wrap; }
+.kpi-trend { color: var(--teal); font-size: 11px; margin-top: 4px; }
+.sidebar-section { padding: 8px 20px 4px; font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.35); letter-spacing: 1.5px; text-transform: uppercase; margin-top: 8px; }
+.user-avatar { width:32px; height:32px; border-radius:50%; background:var(--teal); color:#fff; display:inline-flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; flex-shrink:0; }
 
 /* ── Responsive ── */
 @media (max-width: 768px) {
@@ -208,7 +212,7 @@ tr:hover td { background: #f0f4ff; }
   <div id="offline-banner">⚠ You are offline — jobs will sync when reconnected</div>
   <div id="topbar">
     <div class="logo">eShipper<span>+</span> Warehouse</div>
-    <div class="user-info" id="topbar-user"></div>
+    <div class="user-avatar" id="topbar-user"></div>
     <button class="btn btn-ghost btn-sm" id="signout-btn" style="color:#fff;border-color:rgba(255,255,255,0.4)">Sign Out</button>
   </div>
   <div id="main">
@@ -393,7 +397,10 @@ onAuthStateChanged(firebaseAuth, async (fbUser) => {
     state.token = await fbUser.getIdToken();
     document.getElementById('signin-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
-    document.getElementById('topbar-user').textContent = fbUser.displayName || fbUser.email;
+    const name = fbUser.displayName || fbUser.email || '?';
+    const initials = name.split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
+    document.getElementById('topbar-user').textContent = initials;
+    document.getElementById('topbar-user').title = name;
     await loadData();
     renderNav();
     renderView();
@@ -424,13 +431,13 @@ async function loadData() {
 // ── Navigation ──
 const NAV_ITEMS = {
   admin: [
-    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { id: 'dashboard', label: 'Dashboard', icon: '📊', group: 'Overview' },
     { id: 'analytics', label: 'Analytics', icon: '📈' },
-    { id: 'jobs', label: 'All Jobs', icon: '📦' },
+    { id: 'jobs', label: 'All Jobs', icon: '📦', group: 'Operations' },
     { id: 'customers', label: 'Customers', icon: '🏢' },
-    { id: 'rates', label: 'Rate Cards', icon: '💲' },
+    { id: 'rates', label: 'Rate Cards', icon: '💲', group: 'Config' },
     { id: 'jobtypes', label: 'Job Types', icon: '🔧' },
-    { id: 'users', label: 'Users & Teams', icon: '👥' },
+    { id: 'users', label: 'Users & Teams', icon: '👥', group: 'Admin' },
   ],
   manager: [
     { id: 'my-jobs', label: 'My Jobs', icon: '📋' },
@@ -457,11 +464,12 @@ function renderNav() {
   const sidebarNav = document.getElementById('sidebar-nav');
   const mobileNav = document.getElementById('mobile-nav');
 
-  sidebarNav.innerHTML = items.map(i => `
-    <a href="#" data-view="${i.id}" class="${state.view === i.id ? 'active' : ''}">
-      <span class="icon">${i.icon}</span>${i.label}
-    </a>
-  `).join('');
+  let sidebarHtml = '';
+  items.forEach(i => {
+    if (i.group) sidebarHtml += `<div class="sidebar-section">${i.group}</div>`;
+    sidebarHtml += `<a href="#" data-view="${i.id}" class="${state.view === i.id ? 'active' : ''}"><span class="icon">${i.icon}</span>${i.label}</a>`;
+  });
+  sidebarNav.innerHTML = sidebarHtml;
 
   mobileNav.innerHTML = items.slice(0, 5).map(i => `
     <a href="#" data-view="${i.id}" class="${state.view === i.id ? 'active' : ''}">
@@ -572,13 +580,14 @@ function renderDashboard() {
   const sum = (arr, key) => arr.reduce((a, b) => a + (b[key] || 0), 0);
   const open = jobs.filter(j => j.status !== 'completed');
 
+  const todayRevDiff = todayJobs.length > 0 ? '+' : '';
   const kpis = [
-    { val: open.length, lbl: 'Open Jobs' },
-    { val: fmt(sum(todayJobs, 'revenue')), lbl: "Today's Revenue" },
-    { val: fmt(sum(todayJobs, 'profit')), lbl: "Today's Profit" },
-    { val: fmt(sum(weekJobs, 'revenue')), lbl: 'WTD Revenue' },
-    { val: fmt(sum(weekJobs, 'profit')), lbl: 'WTD Profit' },
-    { val: fmtPct(weekJobs.length ? sum(weekJobs,'marginPct')/weekJobs.length : null), lbl: 'Avg Margin WTD' },
+    { val: open.length, lbl: 'Open Jobs', trend: null },
+    { val: fmt(sum(todayJobs, 'revenue')), lbl: "Today's Revenue", trend: todayJobs.length > 0 ? `${todayJobs.length} jobs` : null },
+    { val: fmt(sum(todayJobs, 'profit')), lbl: "Today's Profit", trend: null },
+    { val: fmt(sum(weekJobs, 'revenue')), lbl: 'WTD Revenue', trend: weekJobs.length > 0 ? `${weekJobs.length} jobs` : null },
+    { val: fmt(sum(weekJobs, 'profit')), lbl: 'WTD Profit', trend: null },
+    { val: fmtPct(weekJobs.length ? sum(weekJobs,'marginPct')/weekJobs.length : null), lbl: 'Avg Margin WTD', trend: null },
   ];
 
   const statusCounts = {};
@@ -593,7 +602,7 @@ function renderDashboard() {
     <div class="section-header"><h1>Executive Dashboard</h1>
       <button class="btn btn-teal btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
     </div>
-    <div class="kpi-row">${kpis.map(k=>`<div class="kpi"><div class="val">${k.val}</div><div class="lbl">${k.lbl}</div></div>`).join('')}</div>
+    <div class="kpi-row">${kpis.map(k=>`<div class="kpi"><div class="val">${k.val}</div><div class="lbl">${k.lbl}</div>${k.trend?`<div class="kpi-trend" style="color:var(--teal);font-size:11px;margin-top:4px">↑ ${k.trend}</div>`:''}</div>`).join('')}</div>
     <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
       ${['created','assigned_manager','assigned_associate','in_progress','completed'].map(s=>`
         <div class="kpi"><div class="val" style="font-size:20px">${statusCounts[s]||0}</div><div class="lbl">${s.replace(/_/g,' ')}</div></div>
@@ -1084,33 +1093,145 @@ function renderJobTypes() {
   return `
     <div class="section-header"><h1>Job Types</h1>
       <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="showAddJobTypeModal()">+ New Job Type</button>
         <button class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('jobtypes-template.csv',
           ['id','name','field_id','field_label','field_type','required'],
           [['receiving','Receiving','order_number','Order Number','text','true'],
-           ['receiving','Receiving','cartons','Cartons','number','false'],
-           ['returns','Returns','order_number','Order Number','text','true'],
-           ['returns','Returns','units','Units','number','false']])">
-          ⬇ Template
-        </button>
+           ['receiving','Receiving','cartons','Cartons','number','false']])">⬇ Template</button>
         <label class="btn btn-teal btn-sm" style="cursor:pointer">
           ⬆ Upload CSV <input type="file" accept=".csv" style="display:none" onchange="uploadJobTypesCSV(this)"/>
         </label>
       </div>
     </div>
-    <div class="card" style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
-      <strong>CSV format:</strong> id, name, field_id, field_label, field_type (text/number), required (true/false)<br/>
-      One row per field. Multiple rows with the same id/name = fields of the same job type.
-    </div>
+    ${types.length === 0 ? '<div class="card"><div class="empty-state">No job types yet. Add one or upload CSV.</div></div>' : ''}
     ${types.map(jt=>`
       <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <div class="card-title" style="margin:0">${jt.name} <span style="font-size:12px;color:var(--text-light)">(${jt.id})</span></div>
-          <button class="btn btn-danger btn-sm" onclick="deleteJobType('${jt.id}')">Delete</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:16px;font-weight:700;color:var(--primary)">${jt.name}</div>
+            <div style="font-size:12px;color:var(--text-light);font-family:monospace">${jt.id}</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="showEditJobTypeModal('${jt.id}')">✏️ Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteJobType('${jt.id}')">Delete</button>
+          </div>
         </div>
-        <table><thead><tr><th>Field ID</th><th>Label</th><th>Type</th><th>Required</th></tr></thead>
-        <tbody>${(jt.fields||[]).map(f=>`<tr><td><code>${f.id}</code></td><td>${f.label}</td><td>${f.type||'text'}</td><td>${f.required?'Yes':'No'}</td></tr>`).join('')}</tbody>
+        <table>
+          <thead><tr><th>Field ID</th><th>Label</th><th>Type</th><th>Required</th></tr></thead>
+          <tbody>${(jt.fields||[]).map(f=>`<tr>
+            <td><code>${f.id}</code></td><td>${f.label}</td>
+            <td><span class="badge" style="background:#e9d8fd;color:#553c9a">${f.type||'text'}</span></td>
+            <td>${f.required?'<span class="badge badge-completed">Yes</span>':'<span style="color:var(--text-light)">No</span>'}</td>
+          </tr>`).join('')}
+          </tbody>
         </table>
       </div>`).join('')}`;
+}
+
+function showAddJobTypeModal() {
+  const overlay = showModal(`
+    <div class="modal-header"><h2>New Job Type</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label>Job Type ID (no spaces, e.g. receiving)</label>
+        <input type="text" id="jt-id" placeholder="e.g. receiving"/></div>
+      <div class="form-group"><label>Display Name</label>
+        <input type="text" id="jt-name" placeholder="e.g. Receiving"/></div>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">Fields</div>
+      <div id="jt-fields-list"></div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFieldRow()">+ Add Field</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitNewJobType()">Create</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+  addFieldRow();
+}
+
+function addFieldRow(fieldId='', label='', type='text', required=false) {
+  const list = document.getElementById('jt-fields-list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'field-row';
+  row.innerHTML = `
+    <input type="text" placeholder="field_id" value="${fieldId}" style="flex:1;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
+    <input type="text" placeholder="Label" value="${label}" style="flex:1.5;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
+    <select style="padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px">
+      <option value="text" ${type==='text'?'selected':''}>text</option>
+      <option value="number" ${type==='number'?'selected':''}>number</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap">
+      <input type="checkbox" ${required?'checked':''}/> Required
+    </label>
+    <button onclick="this.parentElement.remove()" style="background:var(--danger);color:#fff;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px">✕</button>`;
+  list.appendChild(row);
+}
+
+async function submitNewJobType() {
+  const id = document.getElementById('jt-id')?.value.trim().replace(/\s+/g,'_').toLowerCase();
+  const name = document.getElementById('jt-name')?.value.trim();
+  if (!id || !name) { toast('ID and name required'); return; }
+  if (state.data.jobTypes.find(t=>t.id===id)) { toast('Job type ID already exists'); return; }
+  const fields = collectFieldRows();
+  const newType = { id, name, fields };
+  const newTypes = [...state.data.jobTypes, newType];
+  try {
+    await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
+    state.data.jobTypes = newTypes;
+    document.querySelector('.modal-overlay')?.remove();
+    toast('Job type created');
+    renderView();
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
+function showEditJobTypeModal(id) {
+  const jt = state.data.jobTypes.find(t=>t.id===id);
+  if (!jt) return;
+  const overlay = showModal(`
+    <div class="modal-header"><h2>Edit: ${jt.name}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label>Display Name</label>
+        <input type="text" id="jt-edit-name" value="${jt.name}"/></div>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">Fields</div>
+      <div id="jt-fields-list"></div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFieldRow()">+ Add Field</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitEditJobType('${id}')">Save</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+  (jt.fields||[]).forEach(f => addFieldRow(f.id, f.label, f.type||'text', f.required||false));
+}
+
+async function submitEditJobType(id) {
+  const name = document.getElementById('jt-edit-name')?.value.trim();
+  if (!name) { toast('Name required'); return; }
+  const fields = collectFieldRows();
+  const newTypes = state.data.jobTypes.map(t => t.id===id ? { ...t, name, fields } : t);
+  try {
+    await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
+    state.data.jobTypes = newTypes;
+    document.querySelector('.modal-overlay')?.remove();
+    toast('Job type updated');
+    renderView();
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
+function collectFieldRows() {
+  const rows = document.querySelectorAll('#jt-fields-list .field-row');
+  const fields = [];
+  rows.forEach(row => {
+    const inputs = row.querySelectorAll('input[type=text], input[type=number]');
+    const select = row.querySelector('select');
+    const required = row.querySelector('input[type=checkbox]')?.checked || false;
+    const fieldId = inputs[0]?.value.trim().replace(/\s+/g,'_').toLowerCase();
+    const label = inputs[1]?.value.trim();
+    if (fieldId && label) fields.push({ id: fieldId, label, type: select?.value || 'text', required });
+  });
+  return fields;
 }
 
 async function uploadJobTypesCSV(input) {
@@ -1706,6 +1827,7 @@ Object.assign(window, {
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
   uploadCustomersCSV, addCustomer, removeCustomer,
   uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
+  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, submitNewJobType, submitEditJobType,
 });
 </script>
 <script>
