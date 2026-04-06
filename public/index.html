@@ -427,6 +427,7 @@ const NAV_ITEMS = {
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
     { id: 'analytics', label: 'Analytics', icon: '📈' },
     { id: 'jobs', label: 'All Jobs', icon: '📦' },
+    { id: 'customers', label: 'Customers', icon: '🏢' },
     { id: 'rates', label: 'Rate Cards', icon: '💲' },
     { id: 'jobtypes', label: 'Job Types', icon: '🔧' },
     { id: 'users', label: 'Users & Teams', icon: '👥' },
@@ -488,6 +489,7 @@ function renderView() {
   else if (view === 'queue') content.innerHTML = renderManagerQueue();
   else if (view === 'self-log') content.innerHTML = renderSelfLog();
   else if (view === 'create-job') content.innerHTML = renderCreateJob();
+  else if (view === 'customers') content.innerHTML = renderCustomers();
   else if (view === 'rates') content.innerHTML = renderRateCards();
   else if (view === 'jobtypes') content.innerHTML = renderJobTypes();
   else if (view === 'users') content.innerHTML = renderUsersTeams();
@@ -906,21 +908,143 @@ function renderCreateJob() {
 }
 
 // ── Rate Cards ──
+// ── CSV Parsing Utility ──
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  return lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = [];
+    let cur = '', inQ = false;
+    for (const ch of line) {
+      if (ch === '"') inQ = !inQ;
+      else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    vals.push(cur.trim());
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = (vals[i] || '').replace(/^"|"$/g, ''));
+    return obj;
+  });
+}
+
+function downloadCSVTemplate(filename, headers, sampleRows) {
+  const rows = [headers.join(','), ...sampleRows.map(r => r.join(','))];
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Customers ──
+function renderCustomers() {
+  const customers = state.data.customers;
+  return `
+    <div class="section-header"><h1>Customers</h1>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('customers-template.csv',
+          ['name'],
+          [['Acme Corp'],['Widget Co'],['Global Logistics']])">
+          ⬇ Template
+        </button>
+        <label class="btn btn-teal btn-sm" style="cursor:pointer">
+          ⬆ Upload CSV <input type="file" accept=".csv" style="display:none" onchange="uploadCustomersCSV(this)"/>
+        </label>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
+      <strong>CSV format:</strong> Single column <code>name</code> — one customer per row. Uploading merges with existing customers.
+    </div>
+    <div class="card">
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <input type="text" id="new-customer-input" placeholder="Add customer name…"
+          style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px"/>
+        <button class="btn btn-primary" onclick="addCustomer()">Add</button>
+      </div>
+      <table>
+        <thead><tr><th>Customer Name</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${customers.length ? customers.map(c=>`<tr>
+            <td>${c}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="removeCustomer('${c.replace(/'/g,"\\'")}')">Remove</button></td>
+          </tr>`).join('') : '<tr><td colspan="2" class="empty-state">No customers yet</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function uploadCustomersCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const text = await file.text();
+  const rows = parseCSV(text);
+  const newNames = rows.map(r => r.name || r.Name || Object.values(r)[0]).filter(Boolean).map(s => s.trim());
+  const merged = [...new Set([...state.data.customers, ...newNames])];
+  try {
+    await apiFetch('/api/customers', { method: 'PUT', body: JSON.stringify({ list: merged }) });
+    state.data.customers = merged;
+    toast(`Imported ${newNames.length} customer(s)`);
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+  input.value = '';
+}
+
+async function addCustomer() {
+  const input = document.getElementById('new-customer-input');
+  const name = input?.value.trim();
+  if (!name) { toast('Enter a customer name'); return; }
+  if (state.data.customers.includes(name)) { toast('Already exists'); return; }
+  const list = [...state.data.customers, name];
+  try {
+    await apiFetch('/api/customers', { method: 'PUT', body: JSON.stringify({ list }) });
+    state.data.customers = list;
+    toast('Customer added');
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+async function removeCustomer(name) {
+  if (!confirm(`Remove "${name}"?`)) return;
+  const list = state.data.customers.filter(c => c !== name);
+  try {
+    await apiFetch('/api/customers', { method: 'PUT', body: JSON.stringify({ list }) });
+    state.data.customers = list;
+    toast('Customer removed');
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+// ── Rate Cards ──
 function renderRateCards() {
   const customers = state.data.customers;
-  const rateCards = state.data.rateCards;
-  const jobTypes = [
-    { id: 'bts', fields: getJobFields('bts').filter(f => f.type === 'number') },
-    { id: 'kit', fields: getJobFields('kit').filter(f => f.type === 'number') },
-  ];
-
   return `
     <div class="section-header"><h1>Rate Cards</h1>
-      <button class="btn btn-primary" onclick="saveRates()">Save All Rates</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('rates-template.csv',
+          ['customer','job_type_id','field_id','rate'],
+          [['Acme Corp','bts','labour_hours','25.00'],['Acme Corp','bts','units','0.50'],['Acme Corp','kit','labour_hours','30.00']])">
+          ⬇ Template
+        </button>
+        <label class="btn btn-teal btn-sm" style="cursor:pointer">
+          ⬆ Upload CSV <input type="file" accept=".csv" style="display:none" onchange="uploadRatesCSV(this)"/>
+        </label>
+        <button class="btn btn-primary btn-sm" onclick="saveRates()">Save Rates</button>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
+      <strong>CSV format:</strong> customer, job_type_id, field_id, rate &nbsp;|&nbsp;
+      job_type_id: <code>bts</code> or <code>kit</code> (or any custom job type id)
     </div>
     <div class="card">
       <div class="form-group" style="max-width:300px">
-        <label>Customer</label>
+        <label>Preview rates for customer</label>
         <select id="rate-customer" onchange="renderRateTable()">
           <option value="">Select customer…</option>
           ${customers.map(c=>`<option>${c}</option>`).join('')}
@@ -930,20 +1054,111 @@ function renderRateCards() {
     </div>`;
 }
 
+async function uploadRatesCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const text = await file.text();
+  const rows = parseCSV(text);
+  const newRates = JSON.parse(JSON.stringify(state.data.rateCards));
+  rows.forEach(r => {
+    const { customer, job_type_id, field_id, rate } = r;
+    if (!customer || !job_type_id || !field_id) return;
+    if (!newRates[customer]) newRates[customer] = {};
+    if (!newRates[customer][job_type_id]) newRates[customer][job_type_id] = {};
+    newRates[customer][job_type_id][field_id] = parseFloat(rate) || 0;
+  });
+  try {
+    await apiFetch('/api/rates', { method: 'PUT', body: JSON.stringify(newRates) });
+    state.data.rateCards = newRates;
+    toast(`Imported ${rows.length} rate rows`);
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+  input.value = '';
+}
+
+// ── Job Types ──
 function renderJobTypes() {
-  const types = [
-    { id: 'bts', name: 'Back to Stock', fields: getJobFields('bts') },
-    { id: 'kit', name: 'Kitting', fields: getJobFields('kit') },
-  ];
+  const types = state.data.jobTypes;
   return `
-    <div class="section-header"><h1>Job Types</h1></div>
+    <div class="section-header"><h1>Job Types</h1>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('jobtypes-template.csv',
+          ['id','name','field_id','field_label','field_type','required'],
+          [['receiving','Receiving','order_number','Order Number','text','true'],
+           ['receiving','Receiving','cartons','Cartons','number','false'],
+           ['returns','Returns','order_number','Order Number','text','true'],
+           ['returns','Returns','units','Units','number','false']])">
+          ⬇ Template
+        </button>
+        <label class="btn btn-teal btn-sm" style="cursor:pointer">
+          ⬆ Upload CSV <input type="file" accept=".csv" style="display:none" onchange="uploadJobTypesCSV(this)"/>
+        </label>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
+      <strong>CSV format:</strong> id, name, field_id, field_label, field_type (text/number), required (true/false)<br/>
+      One row per field. Multiple rows with the same id/name = fields of the same job type.
+    </div>
     ${types.map(jt=>`
       <div class="card">
-        <div class="card-title">${jt.name} <span style="font-size:12px;color:var(--text-light)">(${jt.id})</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="card-title" style="margin:0">${jt.name} <span style="font-size:12px;color:var(--text-light)">(${jt.id})</span></div>
+          <button class="btn btn-danger btn-sm" onclick="deleteJobType('${jt.id}')">Delete</button>
+        </div>
         <table><thead><tr><th>Field ID</th><th>Label</th><th>Type</th><th>Required</th></tr></thead>
-        <tbody>${jt.fields.map(f=>`<tr><td><code>${f.id}</code></td><td>${f.label}</td><td>${f.type||'text'}</td><td>${f.required?'Yes':'No'}</td></tr>`).join('')}</tbody>
+        <tbody>${(jt.fields||[]).map(f=>`<tr><td><code>${f.id}</code></td><td>${f.label}</td><td>${f.type||'text'}</td><td>${f.required?'Yes':'No'}</td></tr>`).join('')}</tbody>
         </table>
       </div>`).join('')}`;
+}
+
+async function uploadJobTypesCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const text = await file.text();
+  const rows = parseCSV(text);
+  // Group rows by job type id
+  const typeMap = {};
+  rows.forEach(r => {
+    const { id, name, field_id, field_label, field_type, required } = r;
+    if (!id || !field_id) return;
+    if (!typeMap[id]) typeMap[id] = { id, name: name || id, fields: [] };
+    typeMap[id].fields.push({
+      id: field_id,
+      label: field_label || field_id,
+      type: field_type || 'text',
+      required: required === 'true',
+    });
+  });
+  const newTypes = [...state.data.jobTypes];
+  Object.values(typeMap).forEach(jt => {
+    const idx = newTypes.findIndex(t => t.id === jt.id);
+    if (idx >= 0) newTypes[idx] = jt;
+    else newTypes.push(jt);
+  });
+  try {
+    await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
+    state.data.jobTypes = newTypes;
+    toast(`Imported ${Object.keys(typeMap).length} job type(s)`);
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+  input.value = '';
+}
+
+async function deleteJobType(id) {
+  if (!confirm(`Delete job type "${id}"?`)) return;
+  const newTypes = state.data.jobTypes.filter(t => t.id !== id);
+  try {
+    await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
+    state.data.jobTypes = newTypes;
+    toast('Job type deleted');
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
 }
 
 // ── Users & Teams ──
@@ -1489,6 +1704,8 @@ Object.assign(window, {
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
   updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
+  uploadCustomersCSV, addCustomer, removeCustomer,
+  uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
 });
 </script>
 <script>
