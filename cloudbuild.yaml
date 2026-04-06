@@ -1,18 +1,18 @@
 steps:
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing', '.']
+    args: ['build', '-t', 'northamerica-northeast2-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing', '.']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing']
+    args: ['push', 'northamerica-northeast2-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing']
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       - run
       - deploy
       - warehouse-billing
-      - --image=northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing
-      - --region=northamerica-northeast1
+      - --image=northamerica-northeast2-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing
+      - --region=northamerica-northeast2
       - --platform=managed
       - --allow-unauthenticated
       - --set-env-vars=GCP_PROJECT=$PROJECT_ID
 images:
-  - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing'
+  - 'northamerica-northeast2-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing'
