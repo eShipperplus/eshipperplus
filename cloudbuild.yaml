@@ -1,0 +1,18 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/warehouse-billing', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/warehouse-billing']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - warehouse-billing
+      - --image=gcr.io/$PROJECT_ID/warehouse-billing
+      - --region=northamerica-northeast1
+      - --platform=managed
+      - --allow-unauthenticated
+      - --set-env-vars=GCP_PROJECT=$PROJECT_ID
+images:
+  - 'gcr.io/$PROJECT_ID/warehouse-billing'

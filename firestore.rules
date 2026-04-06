@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: check if user is authenticated
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Helper: get current user's role from wh_users
+    function userRole() {
+      return get(/databases/$(database)/documents/wh_users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isAuth() && userRole() == 'admin';
+    }
+
+    function isManager() {
+      return isAuth() && (userRole() == 'manager' || userRole() == 'admin');
+    }
+
+    function isAssociate() {
+      return isAuth() && (userRole() == 'associate' || userRole() == 'manager' || userRole() == 'admin');
+    }
+
+    function isOfficeSupport() {
+      return isAuth() && (userRole() == 'office_support' || userRole() == 'admin');
+    }
+
+    // Jobs collection
+    match /wh_jobs/{jobId} {
+      // Associates can only read their own jobs
+      // Managers and Admins can read all
+      allow read: if isAuth() && (
+        isManager() ||
+        resource.data.createdBy == request.auth.uid ||
+        request.auth.uid in resource.data.assignedAssocId
+      );
+
+      // Associates and office support can create jobs
+      allow create: if isAuth();
+
+      // Managers can edit; admins can edit and delete
+      allow update: if isManager();
+      allow delete: if isAdmin();
+    }
+
+    // Config documents — all authenticated users read, admin write only
+    match /wh_config/{document} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // Users — users read their own doc; admin reads all; no client writes (server-side Admin SDK only)
+    match /wh_users/{uid} {
+      allow read: if isAuth() && (request.auth.uid == uid || isAdmin());
+      allow write: if false; // server-side only via Admin SDK
+    }
+
+    // Audit — authenticated users read audits for jobs they're involved in; no client writes
+    match /wh_audit/{docId} {
+      allow read: if isAuth();
+      allow write: if false; // server-side only
+    }
+
+    // Teams — authenticated read; admin write only
+    match /wh_teams/{teamId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+  }
+}

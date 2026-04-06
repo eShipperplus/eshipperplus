@@ -1,0 +1,1450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="WH Billing"/>
+<meta name="theme-color" content="#34368a"/>
+<link rel="manifest" href="/manifest.json"/>
+<title>eShipper+ Warehouse Billing</title>
+<style>
+:root {
+  --primary: #34368a;
+  --teal: #62c0ae;
+  --grey: #e6e7e8;
+  --dark: #1e2050;
+  --white: #ffffff;
+  --danger: #e53e3e;
+  --success: #38a169;
+  --warning: #d69e2e;
+  --text: #2d3748;
+  --text-light: #718096;
+  --border: #cbd5e0;
+  --radius: 10px;
+  --shadow: 0 2px 8px rgba(0,0,0,0.10);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f7f8fc; color: var(--text); min-height: 100vh; }
+a { color: var(--primary); text-decoration: none; }
+button { cursor: pointer; border: none; font-family: inherit; }
+
+/* ── Layout ── */
+#app { display: flex; flex-direction: column; min-height: 100vh; }
+#topbar { background: var(--primary); color: #fff; display: flex; align-items: center; padding: 0 16px; height: 56px; gap: 12px; position: sticky; top: 0; z-index: 100; }
+#topbar .logo { font-weight: 800; font-size: 18px; letter-spacing: 0.5px; flex: 1; }
+#topbar .logo span { color: var(--teal); }
+#topbar .user-info { font-size: 13px; opacity: 0.85; }
+#topbar .menu-btn { background: none; color: #fff; font-size: 22px; padding: 4px; display: none; }
+#offline-banner { background: var(--warning); color: #fff; text-align: center; padding: 6px; font-size: 13px; font-weight: 600; display: none; }
+#offline-banner.show { display: block; }
+#main { flex: 1; display: flex; }
+#sidebar { width: 220px; background: var(--dark); min-height: calc(100vh - 56px); padding: 12px 0; flex-shrink: 0; }
+#sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 11px 20px; color: rgba(255,255,255,0.75); font-size: 14px; transition: background 0.15s; }
+#sidebar nav a:hover, #sidebar nav a.active { background: rgba(255,255,255,0.10); color: #fff; }
+#sidebar nav a .icon { font-size: 18px; width: 22px; text-align: center; }
+#content { flex: 1; padding: 20px; overflow-y: auto; max-width: 1400px; }
+
+/* ── Cards / Panels ── */
+.card { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px; }
+.card-title { font-size: 16px; font-weight: 700; color: var(--primary); margin-bottom: 14px; }
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.kpi { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; text-align: center; }
+.kpi .val { font-size: 26px; font-weight: 800; color: var(--primary); }
+.kpi .lbl { font-size: 12px; color: var(--text-light); margin-top: 4px; }
+
+/* ── Table ── */
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: var(--primary); color: #fff; padding: 10px 12px; text-align: left; font-weight: 600; white-space: nowrap; }
+td { padding: 9px 12px; border-bottom: 1px solid var(--grey); vertical-align: middle; }
+tr:hover td { background: #f0f4ff; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+.badge-created { background:#e9d8fd; color:#553c9a; }
+.badge-assigned_manager { background:#bee3f8; color:#2b6cb0; }
+.badge-assigned_associate { background:#feebc8; color:#c05621; }
+.badge-in_progress { background:#fefcbf; color:#744210; }
+.badge-completed { background:#c6f6d5; color:#276749; }
+.badge-great { background:#c6f6d5; color:#276749; }
+.badge-good { background:#bee3f8; color:#2b6cb0; }
+.badge-needs_improvement { background:#fed7d7; color:#c53030; }
+
+/* ── Forms ── */
+.form-group { margin-bottom: 14px; }
+.form-group label { display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+.form-group input, .form-group select, .form-group textarea {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 7px;
+  font-size: 14px; font-family: inherit; background: #fff; color: var(--text);
+  transition: border-color 0.15s;
+}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(52,54,138,0.12);
+}
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.toggle-row { display: flex; align-items: center; gap: 10px; }
+.toggle { position: relative; display: inline-block; width: 44px; height: 24px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; inset: 0; background: #ccc; border-radius: 24px; cursor: pointer; transition: 0.2s; }
+.toggle-slider:before { position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+.toggle input:checked + .toggle-slider { background: var(--teal); }
+.toggle input:checked + .toggle-slider:before { transform: translateX(20px); }
+
+/* ── Buttons ── */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 7px; font-size: 14px; font-weight: 600; transition: opacity 0.15s, box-shadow 0.15s; }
+.btn:hover { opacity: 0.88; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-teal { background: var(--teal); color: #fff; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-ghost { background: transparent; color: var(--primary); border: 1.5px solid var(--primary); }
+.btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 5px; }
+.btn-icon { padding: 6px 8px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Modal ── */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 500; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal { background: #fff; border-radius: var(--radius); width: 100%; max-width: 540px; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.22); }
+.modal-header { background: var(--primary); color: #fff; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; border-radius: var(--radius) var(--radius) 0 0; }
+.modal-header h2 { font-size: 16px; }
+.modal-body { padding: 20px; }
+.modal-footer { padding: 12px 20px; border-top: 1px solid var(--grey); display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ── Sign-in ── */
+#signin-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--primary) 0%, var(--dark) 100%); }
+.signin-card { background: #fff; border-radius: 16px; padding: 40px; max-width: 380px; width: 100%; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,0.25); }
+.signin-logo { font-size: 28px; font-weight: 800; color: var(--primary); margin-bottom: 8px; }
+.signin-logo span { color: var(--teal); }
+.signin-sub { color: var(--text-light); font-size: 14px; margin-bottom: 28px; }
+.google-btn { display: inline-flex; align-items: center; gap: 10px; background: #fff; border: 1.5px solid var(--border); border-radius: 8px; padding: 12px 24px; font-size: 15px; font-weight: 600; color: var(--text); cursor: pointer; width: 100%; justify-content: center; transition: box-shadow 0.2s; }
+.google-btn:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+
+/* ── Rating result ── */
+.rating-great { background: #c6f6d5; color: #276749; border-radius: var(--radius); padding: 20px; text-align: center; }
+.rating-good { background: #bee3f8; color: #2b6cb0; border-radius: var(--radius); padding: 20px; text-align: center; }
+.rating-needs_improvement { background: #fed7d7; color: #c53030; border-radius: var(--radius); padding: 20px; text-align: center; }
+.rating-result h3 { font-size: 22px; font-weight: 800; }
+.rating-result p { font-size: 14px; margin-top: 6px; }
+
+/* ── Mobile nav tabs ── */
+#mobile-nav { display: none; background: var(--primary); position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; }
+#mobile-nav a { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0; color: rgba(255,255,255,0.7); font-size: 10px; flex: 1; transition: color 0.15s; text-align: center; }
+#mobile-nav a .icon { font-size: 20px; }
+#mobile-nav a.active { color: var(--teal); }
+
+/* ── Misc ── */
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.section-header h1 { font-size: 20px; font-weight: 700; color: var(--primary); }
+.empty-state { text-align: center; padding: 40px; color: var(--text-light); }
+.spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 22px; border-radius: 20px; font-size: 14px; z-index: 1000; animation: fadeInUp 0.3s; }
+@keyframes fadeInUp { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.filter-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+.filter-row .form-group { margin-bottom: 0; min-width: 150px; }
+.profit-bar-wrap { background: var(--grey); border-radius: 4px; height: 8px; overflow: hidden; }
+.profit-bar { height: 100%; border-radius: 4px; }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  #sidebar { display: none; }
+  #mobile-nav { display: flex; }
+  #content { padding: 12px 12px 70px; }
+  .form-row { grid-template-columns: 1fr; }
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+  #topbar .menu-btn { display: block; }
+  .modal { max-width: 100%; }
+  table { font-size: 12px; }
+  th, td { padding: 7px 8px; }
+}
+@media (max-width: 480px) {
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Sign-in Screen -->
+<div id="signin-screen" style="display:none">
+  <div class="signin-card">
+    <div class="signin-logo">eShipper<span>+</span></div>
+    <div class="signin-sub">Warehouse Billing System</div>
+    <button class="google-btn" id="google-signin-btn">
+      <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.29-8.16 2.29-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+      Sign in with Google
+    </button>
+    <p id="signin-error" style="color:var(--danger);font-size:13px;margin-top:12px;display:none"></p>
+  </div>
+</div>
+
+<!-- Main App -->
+<div id="app" style="display:none">
+  <div id="offline-banner">⚠ You are offline — jobs will sync when reconnected</div>
+  <div id="topbar">
+    <div class="logo">eShipper<span>+</span> Warehouse</div>
+    <div class="user-info" id="topbar-user"></div>
+    <button class="btn btn-ghost btn-sm" id="signout-btn" style="color:#fff;border-color:rgba(255,255,255,0.4)">Sign Out</button>
+  </div>
+  <div id="main">
+    <div id="sidebar">
+      <nav id="sidebar-nav"></nav>
+    </div>
+    <div id="content"></div>
+  </div>
+  <div id="mobile-nav"></div>
+</div>
+
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+
+// ── Firebase Config — replace with your project's config ──
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCrRazbb_1q1Gq--2-nbguRQ0Sl2ziOm9Q",
+  authDomain: "eshipper-f56c3.firebaseapp.com",
+  projectId: "eshipper-f56c3.firebaseapp.com",
+  storageBucket: "eshipper-f56c3.firebasestorage.app",
+  messagingSenderId: "960206640545",
+  appId: "1:960206640545:web:735632739acfdab78d27e0"
+};
+
+const firebaseApp = initializeApp(FIREBASE_CONFIG);
+const firebaseAuth = getAuth(firebaseApp);
+const googleProvider = new GoogleAuthProvider();
+
+// ── State ──
+const state = {
+  user: null,
+  token: null,
+  data: { jobs: [], customers: [], jobTypes: [], rateCards: {}, targets: {}, users: [], teams: [] },
+  view: null,
+  offline: !navigator.onLine,
+};
+
+// ── Offline queue (IndexedDB) ──
+let idbDb = null;
+async function openIDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('wh_offline', 1);
+    req.onupgradeneeded = (e) => {
+      e.target.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true });
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = reject;
+  });
+}
+async function enqueueOffline(payload) {
+  const db = idbDb || (idbDb = await openIDB());
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('queue', 'readwrite');
+    tx.objectStore('queue').add({ payload, ts: Date.now() });
+    tx.oncomplete = resolve;
+    tx.onerror = reject;
+  });
+}
+async function getOfflineQueue() {
+  const db = idbDb || (idbDb = await openIDB());
+  return new Promise((resolve) => {
+    const tx = db.transaction('queue', 'readonly');
+    const req = tx.objectStore('queue').getAll();
+    req.onsuccess = () => resolve(req.result);
+  });
+}
+async function removeOfflineItem(id) {
+  const db = idbDb || (idbDb = await openIDB());
+  return new Promise((resolve) => {
+    const tx = db.transaction('queue', 'readwrite');
+    tx.objectStore('queue').delete(id);
+    tx.oncomplete = resolve;
+  });
+}
+async function syncOfflineQueue() {
+  const items = await getOfflineQueue();
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const item of items) {
+    if (item.ts < cutoff) {
+      toast('⚠ Stale offline entry discarded (>24h)', 4000);
+      await removeOfflineItem(item.id);
+      continue;
+    }
+    try {
+      await apiFetch(item.payload.url, item.payload.options);
+      await removeOfflineItem(item.id);
+    } catch (e) {
+      console.warn('Sync failed for item', item.id, e);
+    }
+  }
+  if (items.length > 0) {
+    toast('Offline queue synced', 2000);
+    await loadData();
+    renderView();
+  }
+}
+
+// ── Network ──
+window.addEventListener('online', () => {
+  state.offline = false;
+  document.getElementById('offline-banner').classList.remove('show');
+  setTimeout(syncOfflineQueue, 1000);
+});
+window.addEventListener('offline', () => {
+  state.offline = true;
+  document.getElementById('offline-banner').classList.add('show');
+});
+if (state.offline) document.getElementById('offline-banner').classList.add('show');
+
+// ── API ──
+async function getToken() {
+  if (firebaseAuth.currentUser) {
+    return firebaseAuth.currentUser.getIdToken(false);
+  }
+  return state.token;
+}
+
+async function apiFetch(url, options = {}) {
+  const token = await getToken();
+  const resp = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: resp.statusText }));
+    throw new Error(err.error || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
+
+// ── Auth ──
+document.getElementById('google-signin-btn').addEventListener('click', async () => {
+  try {
+    await signInWithPopup(firebaseAuth, googleProvider);
+  } catch (e) {
+    const el = document.getElementById('signin-error');
+    el.textContent = e.message;
+    el.style.display = 'block';
+  }
+});
+
+document.getElementById('signout-btn').addEventListener('click', async () => {
+  await signOut(firebaseAuth);
+});
+
+onAuthStateChanged(firebaseAuth, async (fbUser) => {
+  if (fbUser) {
+    state.token = await fbUser.getIdToken();
+    document.getElementById('signin-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    document.getElementById('topbar-user').textContent = fbUser.displayName || fbUser.email;
+    await loadData();
+    renderNav();
+    renderView();
+  } else {
+    state.user = null;
+    document.getElementById('signin-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+  }
+});
+
+// ── Data Load ──
+async function loadData() {
+  try {
+    const d = await apiFetch('/api/init');
+    state.user = d.user;
+    state.data.jobs = d.jobs || [];
+    state.data.customers = d.customers || [];
+    state.data.jobTypes = d.jobTypes || [];
+    state.data.rateCards = d.rateCards || {};
+    state.data.targets = d.targets || {};
+    state.data.users = d.users || [];
+    state.data.teams = d.teams || [];
+  } catch (e) {
+    toast('Failed to load data: ' + e.message, 3000);
+  }
+}
+
+// ── Navigation ──
+const NAV_ITEMS = {
+  admin: [
+    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { id: 'analytics', label: 'Analytics', icon: '📈' },
+    { id: 'jobs', label: 'All Jobs', icon: '📦' },
+    { id: 'rates', label: 'Rate Cards', icon: '💲' },
+    { id: 'jobtypes', label: 'Job Types', icon: '🔧' },
+    { id: 'users', label: 'Users & Teams', icon: '👥' },
+  ],
+  manager: [
+    { id: 'my-jobs', label: 'My Jobs', icon: '📋' },
+    { id: 'queue', label: 'Job Queue', icon: '📬' },
+    { id: 'jobs', label: 'All Jobs', icon: '📦' },
+    { id: 'self-log', label: 'Self-Log', icon: '✏️' },
+  ],
+  associate: [
+    { id: 'my-jobs', label: 'My Jobs', icon: '📋' },
+    { id: 'self-log', label: 'Self-Log', icon: '✏️' },
+  ],
+  office_support: [
+    { id: 'create-job', label: 'Create Job', icon: '➕' },
+    { id: 'my-jobs', label: 'My Jobs', icon: '📋' },
+  ],
+};
+
+function renderNav() {
+  const role = state.user?.role || 'associate';
+  const items = NAV_ITEMS[role] || NAV_ITEMS.associate;
+  const defaultView = items[0]?.id;
+  if (!state.view) state.view = defaultView;
+
+  const sidebarNav = document.getElementById('sidebar-nav');
+  const mobileNav = document.getElementById('mobile-nav');
+
+  sidebarNav.innerHTML = items.map(i => `
+    <a href="#" data-view="${i.id}" class="${state.view === i.id ? 'active' : ''}">
+      <span class="icon">${i.icon}</span>${i.label}
+    </a>
+  `).join('');
+
+  mobileNav.innerHTML = items.slice(0, 5).map(i => `
+    <a href="#" data-view="${i.id}" class="${state.view === i.id ? 'active' : ''}">
+      <span class="icon">${i.icon}</span>${i.label}
+    </a>
+  `).join('');
+
+  document.querySelectorAll('[data-view]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      state.view = el.dataset.view;
+      renderNav();
+      renderView();
+    });
+  });
+}
+
+function renderView() {
+  const content = document.getElementById('content');
+  const view = state.view;
+  if (view === 'dashboard') content.innerHTML = renderDashboard();
+  else if (view === 'analytics') content.innerHTML = renderAnalytics();
+  else if (view === 'jobs') content.innerHTML = renderAllJobs();
+  else if (view === 'my-jobs') content.innerHTML = renderMyJobs();
+  else if (view === 'queue') content.innerHTML = renderManagerQueue();
+  else if (view === 'self-log') content.innerHTML = renderSelfLog();
+  else if (view === 'create-job') content.innerHTML = renderCreateJob();
+  else if (view === 'rates') content.innerHTML = renderRateCards();
+  else if (view === 'jobtypes') content.innerHTML = renderJobTypes();
+  else if (view === 'users') content.innerHTML = renderUsersTeams();
+  else content.innerHTML = '<div class="empty-state">Select a view</div>';
+  attachViewHandlers(view);
+}
+
+// ── Utilities ──
+function fmt(n) { return n != null ? '$' + Number(n).toFixed(2) : '—'; }
+function fmtPct(n) { return n != null ? Number(n).toFixed(1) + '%' : '—'; }
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = ts.toDate ? ts.toDate() : new Date(ts._seconds ? ts._seconds * 1000 : ts);
+  return d.toLocaleDateString('en-CA');
+}
+function statusBadge(s) { return `<span class="badge badge-${s}">${s.replace(/_/g,' ')}</span>`; }
+function ratingBadge(r) { return r ? `<span class="badge badge-${r}">${r.replace(/_/g,' ')}</span>` : '—'; }
+function jobTypeName(id) { return id === 'bts' ? 'Back to Stock' : id === 'kit' ? 'Kitting' : id; }
+
+function toast(msg, dur = 2500) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), dur);
+}
+
+function showModal(html) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal">${html}</div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  return overlay;
+}
+
+function getJobFields(jobTypeId) {
+  const jt = state.data.jobTypes.find(j => j.id === jobTypeId);
+  if (jt) return jt.fields;
+  return jobTypeId === 'bts'
+    ? [{id:'order_number',label:'Order Number',type:'text',required:true},{id:'cartons',label:'Cartons',type:'number'},{id:'labels',label:'Labels',type:'number'},{id:'units',label:'Units',type:'number'},{id:'pallets_wrapped',label:'Pallets Wrapped',type:'number'},{id:'labour_hours',label:'Labour Hours',type:'number'}]
+    : [{id:'labour_hours',label:'Labour Hours',type:'number'},{id:'units',label:'Units',type:'number'},{id:'pallets',label:'Pallets',type:'number'},{id:'labels',label:'Labels',type:'number'},{id:'skus',label:'SKUs',type:'number'},{id:'kits_made',label:'Kits Made',type:'number'}];
+}
+
+function renderFieldInputs(fields, values = {}) {
+  return fields.map(f => `
+    <div class="form-group">
+      <label>${f.label}${f.required ? ' *' : ''}</label>
+      <input type="${f.type || 'text'}" name="${f.id}" value="${values[f.id] || ''}"
+        placeholder="${f.label}" ${f.required ? 'required' : ''}/>
+    </div>
+  `).join('');
+}
+
+function collectFields(form, fields) {
+  const result = {};
+  fields.forEach(f => {
+    const el = form.querySelector(`[name="${f.id}"]`);
+    if (!el) return;
+    const v = el.value.trim();
+    if (!v) return;
+    result[f.id] = f.type === 'number' ? parseFloat(v) : v;
+  });
+  return result;
+}
+
+// ── Dashboard ──
+function renderDashboard() {
+  const jobs = state.data.jobs;
+  const today = new Date().toISOString().split('T')[0];
+  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+
+  const completed = jobs.filter(j => j.status === 'completed');
+  const todayJobs = completed.filter(j => fmtDate(j.completedAt) === today);
+  const weekJobs = completed.filter(j => {
+    const d = j.completedAt ? (j.completedAt.toDate ? j.completedAt.toDate() : new Date(j.completedAt._seconds*1000)) : null;
+    return d && d >= weekStart;
+  });
+
+  const sum = (arr, key) => arr.reduce((a, b) => a + (b[key] || 0), 0);
+  const open = jobs.filter(j => j.status !== 'completed');
+
+  const kpis = [
+    { val: open.length, lbl: 'Open Jobs' },
+    { val: fmt(sum(todayJobs, 'revenue')), lbl: "Today's Revenue" },
+    { val: fmt(sum(todayJobs, 'profit')), lbl: "Today's Profit" },
+    { val: fmt(sum(weekJobs, 'revenue')), lbl: 'WTD Revenue' },
+    { val: fmt(sum(weekJobs, 'profit')), lbl: 'WTD Profit' },
+    { val: fmtPct(weekJobs.length ? sum(weekJobs,'marginPct')/weekJobs.length : null), lbl: 'Avg Margin WTD' },
+  ];
+
+  const statusCounts = {};
+  jobs.forEach(j => { statusCounts[j.status] = (statusCounts[j.status]||0)+1; });
+
+  const ageMs = (j) => {
+    const d = j.createdAt ? (j.createdAt.toDate ? j.createdAt.toDate() : new Date(j.createdAt._seconds*1000)) : null;
+    return d ? Date.now() - d.getTime() : 0;
+  };
+
+  return `
+    <div class="section-header"><h1>Executive Dashboard</h1>
+      <button class="btn btn-teal btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
+    </div>
+    <div class="kpi-row">${kpis.map(k=>`<div class="kpi"><div class="val">${k.val}</div><div class="lbl">${k.lbl}</div></div>`).join('')}</div>
+    <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
+      ${['created','assigned_manager','assigned_associate','in_progress','completed'].map(s=>`
+        <div class="kpi"><div class="val" style="font-size:20px">${statusCounts[s]||0}</div><div class="lbl">${s.replace(/_/g,' ')}</div></div>
+      `).join('')}
+    </div>
+    <div class="card">
+      <div class="card-title">Open Jobs</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Customer</th><th>Type</th><th>Status</th><th>Age</th><th>Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
+          <tbody>${open.length ? open.sort((a,b)=>ageMs(b)-ageMs(a)).map(j=>`
+            <tr>
+              <td>${j.customerId}</td>
+              <td>${jobTypeName(j.jobTypeId)}</td>
+              <td>${statusBadge(j.status)}</td>
+              <td>${Math.floor(ageMs(j)/3600000)}h</td>
+              <td>${j.dueDate||'—'}</td>
+              <td>${(j.assignedAssocNames||[]).join(', ')||j.assignedManagerName||'—'}</td>
+              <td><button class="btn btn-primary btn-sm" onclick="openJobModal('${j.id}')">View</button></td>
+            </tr>`).join('') : '<tr><td colspan="7" class="empty-state">No open jobs</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── Analytics ──
+function renderAnalytics() {
+  const jobs = state.data.jobs.filter(j => j.status === 'completed');
+  // Build associate breakdown
+  const assocMap = {};
+  jobs.forEach(j => {
+    (j.assignedAssocNames || []).forEach((name, i) => {
+      const uid = (j.assignedAssocId || [])[i];
+      const key = uid || name;
+      if (!assocMap[key]) assocMap[key] = { name, revenue:0, cost:0, profit:0, count:0, ratings:{great:0,good:0,needs_improvement:0} };
+      assocMap[key].revenue += j.revenue || 0;
+      assocMap[key].cost += j.cost || 0;
+      assocMap[key].profit += j.profit || 0;
+      assocMap[key].count++;
+      if (j.rating) assocMap[key].ratings[j.rating] = (assocMap[key].ratings[j.rating]||0)+1;
+    });
+  });
+  const rows = Object.values(assocMap);
+
+  return `
+    <div class="section-header"><h1>Profitability Analytics</h1></div>
+    <div class="card">
+      <div class="filter-row" id="analytics-filters">
+        <div class="form-group"><label>Customer</label>
+          <select id="af-customer"><option value="">All</option>${state.data.customers.map(c=>`<option>${c}</option>`).join('')}</select>
+        </div>
+        <div class="form-group"><label>Job Type</label>
+          <select id="af-type"><option value="">All</option><option value="bts">Back to Stock</option><option value="kit">Kitting</option></select>
+        </div>
+        <div class="form-group"><label>From</label><input type="date" id="af-from"/></div>
+        <div class="form-group"><label>To</label><input type="date" id="af-to"/></div>
+        <button class="btn btn-primary" onclick="applyAnalyticsFilter()">Apply</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Associate Breakdown</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Associate</th><th>Jobs</th><th>Revenue</th><th>Cost</th><th>Profit</th><th>Margin %</th><th>Great</th><th>Good</th><th>Needs Work</th></tr></thead>
+          <tbody>${rows.length ? rows.map(r=>{
+            const margin = r.revenue > 0 ? (r.profit/r.revenue*100).toFixed(1) : '—';
+            return `<tr>
+              <td>${r.name}</td><td>${r.count}</td>
+              <td>${fmt(r.revenue)}</td><td>${fmt(r.cost)}</td><td>${fmt(r.profit)}</td>
+              <td>${margin}%</td>
+              <td><span class="badge badge-great">${r.ratings.great||0}</span></td>
+              <td><span class="badge badge-good">${r.ratings.good||0}</span></td>
+              <td><span class="badge badge-needs_improvement">${r.ratings.needs_improvement||0}</span></td>
+            </tr>`;
+          }).join('') : '<tr><td colspan="9" class="empty-state">No completed jobs</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Completed Jobs</div>
+      <div class="tbl-wrap">
+        <table id="analytics-jobs-table">
+          <thead><tr><th>Date</th><th>Customer</th><th>Type</th><th>Associates</th><th>Revenue</th><th>Cost</th><th>Profit</th><th>Margin</th><th>Rating</th></tr></thead>
+          <tbody>${renderAnalyticsJobRows(jobs)}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderAnalyticsJobRows(jobs) {
+  if (!jobs.length) return '<tr><td colspan="9" class="empty-state">No data</td></tr>';
+  return jobs.map(j=>`<tr>
+    <td>${fmtDate(j.completedAt)}</td><td>${j.customerId}</td><td>${jobTypeName(j.jobTypeId)}</td>
+    <td>${(j.assignedAssocNames||[]).join(', ')||'—'}</td>
+    <td>${fmt(j.revenue)}</td><td>${fmt(j.cost)}</td><td>${fmt(j.profit)}</td>
+    <td>${fmtPct(j.marginPct)}</td><td>${ratingBadge(j.rating)}</td>
+  </tr>`).join('');
+}
+
+// ── All Jobs ──
+function renderAllJobs() {
+  const jobs = state.data.jobs;
+  return `
+    <div class="section-header"><h1>All Jobs</h1>
+      <button class="btn btn-teal" onclick="showCreateJobModal()">+ New Job</button>
+    </div>
+    <div class="card">
+      <div class="filter-row">
+        <div class="form-group"><label>Status</label>
+          <select id="jf-status"><option value="">All</option>
+            ${['created','assigned_manager','assigned_associate','in_progress','completed'].map(s=>`<option value="${s}">${s.replace(/_/g,' ')}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label>Customer</label>
+          <select id="jf-customer"><option value="">All</option>${state.data.customers.map(c=>`<option>${c}</option>`).join('')}</select>
+        </div>
+        <div class="form-group"><label>Type</label>
+          <select id="jf-type"><option value="">All</option><option value="bts">Back to Stock</option><option value="kit">Kitting</option></select>
+        </div>
+        <button class="btn btn-primary" onclick="applyJobsFilter()">Filter</button>
+      </div>
+      <div class="tbl-wrap">
+        <table id="all-jobs-table">
+          <thead><tr><th>Customer</th><th>Type</th><th>Status</th><th>Billable</th><th>Created</th><th>Created By</th><th>Assigned</th><th>Revenue</th><th>Rating</th><th>Actions</th></tr></thead>
+          <tbody>${renderJobRows(jobs)}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderJobRows(jobs) {
+  if (!jobs.length) return '<tr><td colspan="10" class="empty-state">No jobs found</td></tr>';
+  return jobs.map(j=>`<tr>
+    <td>${j.customerId}</td>
+    <td>${jobTypeName(j.jobTypeId)}</td>
+    <td>${statusBadge(j.status)}</td>
+    <td>${j.billable?'✅':'❌'}</td>
+    <td>${fmtDate(j.createdAt)}</td>
+    <td>${j.createdByName||'—'}</td>
+    <td>${(j.assignedAssocNames||[]).join(', ')||j.assignedManagerName||'—'}</td>
+    <td>${fmt(j.revenue)}</td>
+    <td>${ratingBadge(j.rating)}</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-primary btn-sm" onclick="openJobModal('${j.id}')">View</button>
+      ${state.user.role==='admin'?`<button class="btn btn-danger btn-sm" onclick="deleteJob('${j.id}')">Del</button>`:''}
+    </td>
+  </tr>`).join('');
+}
+
+// ── My Jobs ──
+function renderMyJobs() {
+  const uid = state.user.uid;
+  const jobs = state.data.jobs.filter(j =>
+    j.createdBy === uid || (j.assignedAssocId||[]).includes(uid) || j.assignedManagerId === uid
+  );
+  const active = jobs.filter(j => j.status !== 'completed');
+  const done = jobs.filter(j => j.status === 'completed').slice(0, 20);
+
+  return `
+    <div class="section-header"><h1>My Jobs</h1>
+      <button class="btn btn-teal" onclick="showSelfLogModal()">+ Self-Log</button>
+    </div>
+    ${active.length ? `
+    <div class="card">
+      <div class="card-title">Active (${active.length})</div>
+      ${active.map(j=>`
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+              <div style="font-weight:700">${j.customerId} — ${jobTypeName(j.jobTypeId)}</div>
+              <div style="font-size:12px;color:var(--text-light)">Due: ${j.dueDate||'—'} | ${statusBadge(j.status)}</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              ${(j.assignedAssocId||[]).includes(uid)||j.createdBy===uid||state.user.role==='manager'||state.user.role==='admin'?
+                `<button class="btn btn-teal btn-sm" onclick="openCompleteModal('${j.id}')">Complete</button>`:''}
+              <button class="btn btn-ghost btn-sm" onclick="openJobModal('${j.id}')">Details</button>
+            </div>
+          </div>
+          ${j.notes?`<div style="font-size:12px;margin-top:8px;color:var(--text-light)">${j.notes}</div>`:''}
+        </div>
+      `).join('')}
+    </div>` : '<div class="card"><div class="empty-state">No active jobs 🎉</div></div>'}
+    <div class="card">
+      <div class="card-title">Recent Completed</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Customer</th><th>Type</th><th>Completed</th><th>Revenue</th><th>Rating</th></tr></thead>
+          <tbody>${done.length ? done.map(j=>`<tr>
+            <td>${j.customerId}</td><td>${jobTypeName(j.jobTypeId)}</td>
+            <td>${fmtDate(j.completedAt)}</td><td>${fmt(j.revenue)}</td><td>${ratingBadge(j.rating)}</td>
+          </tr>`).join('') : '<tr><td colspan="5" class="empty-state">None yet</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── Manager Queue ──
+function renderManagerQueue() {
+  const uid = state.user.uid;
+  const unassigned = state.data.jobs.filter(j => j.status === 'created' || (j.status === 'assigned_manager' && j.assignedManagerId === uid));
+  const myTeamAssocs = state.data.users.filter(u => u.role === 'associate' || u.role === 'manager');
+
+  return `
+    <div class="section-header"><h1>Job Queue</h1></div>
+    <div class="card">
+      <div class="card-title">Needs Assignment (${unassigned.length})</div>
+      ${unassigned.length ? unassigned.map(j=>`
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+              <div style="font-weight:700">${j.customerId} — ${jobTypeName(j.jobTypeId)}</div>
+              <div style="font-size:12px;color:var(--text-light)">${statusBadge(j.status)} | Created by ${j.createdByName}</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="assoc-${j.id}" style="padding:6px;border:1px solid var(--border);border-radius:5px;font-size:13px">
+                <option value="">Select associate…</option>
+                ${myTeamAssocs.map(u=>`<option value="${u.uid}">${u.displayName}</option>`).join('')}
+              </select>
+              <button class="btn btn-primary btn-sm" onclick="assignAssociate('${j.id}')">Assign</button>
+              <button class="btn btn-teal btn-sm" onclick="openCompleteModal('${j.id}')">Complete</button>
+            </div>
+          </div>
+        </div>`).join('') : '<div class="empty-state">Queue is empty ✓</div>'}
+    </div>`;
+}
+
+// ── Self-Log / Create Job ──
+function renderSelfLog() {
+  return `
+    <div class="section-header"><h1>Self-Log a Job</h1></div>
+    <div class="card">
+      <form id="self-log-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Customer *</label>
+            <select name="customerId" required>
+              <option value="">Select customer…</option>
+              ${state.data.customers.map(c=>`<option>${c}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Job Type *</label>
+            <select name="jobTypeId" required onchange="updateSelfLogFields(this.value)">
+              <option value="">Select type…</option>
+              <option value="bts">Back to Stock</option>
+              <option value="kit">Kitting</option>
+            </select>
+          </div>
+        </div>
+        <div id="self-log-fields"></div>
+        <div class="form-group">
+          <label>Due Date</label>
+          <input type="date" name="dueDate"/>
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea name="notes" rows="2"></textarea>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle"><input type="checkbox" name="billable" checked/><span class="toggle-slider"></span></label>
+          <span>Billable</span>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button type="submit" class="btn btn-primary">Save & Complete</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+function renderCreateJob() {
+  const managers = state.data.users.filter(u => u.role === 'manager' || u.role === 'admin');
+  return `
+    <div class="section-header"><h1>Create Job</h1></div>
+    <div class="card">
+      <form id="create-job-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Customer *</label>
+            <select name="customerId" required>
+              <option value="">Select customer…</option>
+              ${state.data.customers.map(c=>`<option>${c}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Job Type *</label>
+            <select name="jobTypeId" required>
+              <option value="">Select type…</option>
+              <option value="bts">Back to Stock</option>
+              <option value="kit">Kitting</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Assign to Manager</label>
+          <select name="assignedManagerId">
+            <option value="">Select manager…</option>
+            ${managers.map(u=>`<option value="${u.uid}">${u.displayName}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label>Due Date</label><input type="date" name="dueDate"/></div>
+        <div class="form-group"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
+        <div class="toggle-row">
+          <label class="toggle"><input type="checkbox" name="billable" checked/><span class="toggle-slider"></span></label>
+          <span>Billable</span>
+        </div>
+        <div style="margin-top:16px"><button type="submit" class="btn btn-primary">Create Job</button></div>
+      </form>
+    </div>`;
+}
+
+// ── Rate Cards ──
+function renderRateCards() {
+  const customers = state.data.customers;
+  const rateCards = state.data.rateCards;
+  const jobTypes = [
+    { id: 'bts', fields: getJobFields('bts').filter(f => f.type === 'number') },
+    { id: 'kit', fields: getJobFields('kit').filter(f => f.type === 'number') },
+  ];
+
+  return `
+    <div class="section-header"><h1>Rate Cards</h1>
+      <button class="btn btn-primary" onclick="saveRates()">Save All Rates</button>
+    </div>
+    <div class="card">
+      <div class="form-group" style="max-width:300px">
+        <label>Customer</label>
+        <select id="rate-customer" onchange="renderRateTable()">
+          <option value="">Select customer…</option>
+          ${customers.map(c=>`<option>${c}</option>`).join('')}
+        </select>
+      </div>
+      <div id="rate-table-wrap"></div>
+    </div>`;
+}
+
+function renderJobTypes() {
+  const types = [
+    { id: 'bts', name: 'Back to Stock', fields: getJobFields('bts') },
+    { id: 'kit', name: 'Kitting', fields: getJobFields('kit') },
+  ];
+  return `
+    <div class="section-header"><h1>Job Types</h1></div>
+    ${types.map(jt=>`
+      <div class="card">
+        <div class="card-title">${jt.name} <span style="font-size:12px;color:var(--text-light)">(${jt.id})</span></div>
+        <table><thead><tr><th>Field ID</th><th>Label</th><th>Type</th><th>Required</th></tr></thead>
+        <tbody>${jt.fields.map(f=>`<tr><td><code>${f.id}</code></td><td>${f.label}</td><td>${f.type||'text'}</td><td>${f.required?'Yes':'No'}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>`).join('')}`;
+}
+
+// ── Users & Teams ──
+function renderUsersTeams() {
+  const users = state.data.users;
+  const teams = state.data.teams;
+  return `
+    <div class="section-header"><h1>Users & Teams</h1>
+      <button class="btn btn-primary" onclick="showCreateTeamModal()">+ New Team</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Users</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Hourly Cost</th><th>Last Seen</th><th>Actions</th></tr></thead>
+          <tbody>${users.map(u=>`<tr>
+            <td>${u.displayName}</td>
+            <td>${u.email}</td>
+            <td>
+              <select onchange="updateUserRole('${u.uid}', this.value)" style="font-size:12px;padding:3px">
+                ${['admin','manager','associate','office_support'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join('')}
+              </select>
+            </td>
+            <td>${teams.find(t=>t.memberIds?.includes(u.uid))?.name||'—'}</td>
+            <td>
+              <input type="number" value="${u.hourlyCost||0}" min="0" step="0.01"
+                style="width:80px;padding:3px;border:1px solid var(--border);border-radius:4px;font-size:12px"
+                onchange="updateUserCost('${u.uid}', parseFloat(this.value))"/>
+            </td>
+            <td>${fmtDate(u.lastSeen)}</td>
+            <td>${u.uid !== state.user.uid ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.uid}')">Del</button>` : '<em>You</em>'}</td>
+          </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Teams</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Team</th><th>Manager</th><th>Members</th><th>Actions</th></tr></thead>
+          <tbody>${teams.map(t=>`<tr>
+            <td>${t.name}</td>
+            <td>${users.find(u=>u.uid===t.managerId)?.displayName||'—'}</td>
+            <td>${(t.memberIds||[]).map(id=>users.find(u=>u.uid===id)?.displayName||id).join(', ')||'—'}</td>
+            <td>
+              <button class="btn btn-ghost btn-sm" onclick="editTeamModal('${t.id}')">Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteTeam('${t.id}')">Del</button>
+            </td>
+          </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── View Handlers (event wiring) ──
+function attachViewHandlers(view) {
+  if (view === 'self-log') {
+    document.getElementById('self-log-form')?.addEventListener('submit', submitSelfLog);
+  }
+  if (view === 'create-job') {
+    document.getElementById('create-job-form')?.addEventListener('submit', submitCreateJob);
+  }
+  if (view === 'rates') {
+    // nothing — dynamic
+  }
+}
+
+// ── Self-log submit ──
+async function submitSelfLog(e) {
+  e.preventDefault();
+  const form = e.target;
+  const jobTypeId = form.jobTypeId.value;
+  const customerId = form.customerId.value;
+  if (!jobTypeId || !customerId) { toast('Select customer and job type'); return; }
+
+  const fields = collectFields(form, getJobFields(jobTypeId));
+  const body = {
+    jobTypeId, customerId, fields,
+    billable: form.billable.checked,
+    dueDate: form.dueDate.value || null,
+    notes: form.notes.value,
+  };
+
+  try {
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>';
+
+    if (state.offline) {
+      await enqueueOffline({ url: '/api/jobs', options: { method: 'POST', body: JSON.stringify(body) } });
+      toast('Saved offline — will sync on reconnect');
+      form.reset();
+      document.getElementById('self-log-fields').innerHTML = '';
+    } else {
+      const job = await apiFetch('/api/jobs', { method: 'POST', body: JSON.stringify(body) });
+      // Auto-complete the job
+      const complResult = await apiFetch(`/api/jobs/${job.id}/complete`, {
+        method: 'PUT', body: JSON.stringify({ fields, billable: body.billable })
+      });
+      await loadData();
+      showRatingResult(complResult);
+    }
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  } finally {
+    const btn = form.querySelector('button[type=submit]');
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Save & Complete'; }
+  }
+}
+
+function showRatingResult(job) {
+  const cls = `rating-${job.rating||'needs_improvement'}`;
+  const emoji = job.rating === 'great' ? '🌟' : job.rating === 'good' ? '👍' : '⚠️';
+  const overlay = showModal(`
+    <div class="modal-header"><h2>Job Completed!</h2><button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button></div>
+    <div class="modal-body">
+      <div class="${cls} rating-result">
+        <h3>${emoji} ${(job.rating||'').replace(/_/g,' ').toUpperCase()}</h3>
+        <p>Revenue: ${fmt(job.revenue)} | Cost: ${fmt(job.cost)} | Profit: ${fmt(job.profit)}</p>
+        <p>Margin: ${fmtPct(job.marginPct)}</p>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();renderView()">Done</button></div>`);
+}
+
+// ── Create job (office support) ──
+async function submitCreateJob(e) {
+  e.preventDefault();
+  const form = e.target;
+  const body = {
+    jobTypeId: form.jobTypeId.value,
+    customerId: form.customerId.value,
+    assignedManagerId: form.assignedManagerId.value || null,
+    billable: form.billable.checked,
+    dueDate: form.dueDate.value || null,
+    notes: form.notes.value,
+  };
+  if (!body.jobTypeId || !body.customerId) { toast('Select customer and job type'); return; }
+  try {
+    await apiFetch('/api/jobs', { method: 'POST', body: JSON.stringify(body) });
+    toast('Job created');
+    await loadData();
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+// ── Job Modal ──
+async function openJobModal(jobId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const fields = getJobFields(job.jobTypeId);
+
+  const overlay = showModal(`
+    <div class="modal-header">
+      <h2>${job.customerId} — ${jobTypeName(job.jobTypeId)}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;font-size:13px">
+        <div><strong>Status:</strong> ${statusBadge(job.status)}</div>
+        <div><strong>Billable:</strong> ${job.billable?'Yes':'No'}</div>
+        <div><strong>Created by:</strong> ${job.createdByName||'—'}</div>
+        <div><strong>Created:</strong> ${fmtDate(job.createdAt)}</div>
+        <div><strong>Manager:</strong> ${job.assignedManagerName||'—'}</div>
+        <div><strong>Associates:</strong> ${(job.assignedAssocNames||[]).join(', ')||'—'}</div>
+        ${job.completedByName?`<div><strong>Completed by:</strong> ${job.completedByName}</div><div><strong>Completed:</strong> ${fmtDate(job.completedAt)}</div>`:''}
+        ${job.revenue!=null?`<div><strong>Revenue:</strong> ${fmt(job.revenue)}</div><div><strong>Profit:</strong> ${fmt(job.profit)}</div>`:''}
+        ${job.rating?`<div><strong>Rating:</strong> ${ratingBadge(job.rating)}</div><div><strong>Margin:</strong> ${fmtPct(job.marginPct)}</div>`:''}
+      </div>
+      <div style="font-size:13px"><strong>Fields:</strong></div>
+      <div style="background:var(--grey);border-radius:7px;padding:10px;margin-top:6px;font-size:13px">
+        ${fields.map(f=>`<div style="display:flex;justify-content:space-between;padding:3px 0"><span>${f.label}:</span><strong>${job.fields?.[f.id]??'—'}</strong></div>`).join('')}
+      </div>
+      ${job.notes?`<div style="margin-top:12px;font-size:13px"><strong>Notes:</strong> ${job.notes}</div>`:''}
+    </div>
+    <div class="modal-footer">
+      ${job.status!=='completed' && (state.user.role==='admin'||state.user.role==='manager'||(job.assignedAssocId||[]).includes(state.user.uid))?
+        `<button class="btn btn-teal" onclick="this.closest('.modal-overlay').remove();openCompleteModal('${job.id}')">Complete</button>`:''}
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
+    </div>`);
+}
+
+// ── Complete Modal ──
+async function openCompleteModal(jobId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const fields = getJobFields(job.jobTypeId);
+
+  const overlay = showModal(`
+    <div class="modal-header"><h2>Complete Job — ${job.customerId}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="complete-form">
+        ${renderFieldInputs(fields, job.fields||{})}
+        <div class="toggle-row">
+          <label class="toggle"><input type="checkbox" name="billable" ${job.billable?'checked':''}/><span class="toggle-slider"></span></label>
+          <span>Billable</span>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-teal" id="complete-submit-btn" onclick="submitComplete('${jobId}')">Submit</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function submitComplete(jobId) {
+  const form = document.getElementById('complete-form');
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const fields = getJobFields(job.jobTypeId);
+  const fieldVals = collectFields(form, fields);
+  const billable = form.querySelector('[name=billable]').checked;
+
+  const btn = document.getElementById('complete-submit-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    if (state.offline) {
+      await enqueueOffline({ url: `/api/jobs/${jobId}/complete`, options: { method: 'PUT', body: JSON.stringify({ fields: fieldVals, billable }) } });
+      toast('Saved offline — will sync on reconnect');
+      document.querySelector('.modal-overlay')?.remove();
+    } else {
+      const result = await apiFetch(`/api/jobs/${jobId}/complete`, { method: 'PUT', body: JSON.stringify({ fields: fieldVals, billable }) });
+      document.querySelector('.modal-overlay')?.remove();
+      await loadData();
+      showRatingResult(result);
+      renderNav();
+    }
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+    btn.disabled = false; btn.textContent = 'Submit';
+  }
+}
+
+// ── Assign associate from queue ──
+async function assignAssociate(jobId) {
+  const select = document.getElementById(`assoc-${jobId}`);
+  const assocId = select?.value;
+  if (!assocId) { toast('Select an associate first'); return; }
+  try {
+    await apiFetch(`/api/jobs/${jobId}/assign-associate`, { method: 'PUT', body: JSON.stringify({ associateIds: [assocId] }) });
+    toast('Assigned');
+    await loadData();
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+// ── Delete job ──
+async function deleteJob(jobId) {
+  if (!confirm('Delete this job? This cannot be undone.')) return;
+  try {
+    await apiFetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+    toast('Deleted');
+    await loadData();
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+// ── Analytics filter ──
+function applyAnalyticsFilter() {
+  const customer = document.getElementById('af-customer')?.value;
+  const type = document.getElementById('af-type')?.value;
+  const from = document.getElementById('af-from')?.value;
+  const to = document.getElementById('af-to')?.value;
+
+  let jobs = state.data.jobs.filter(j => j.status === 'completed');
+  if (customer) jobs = jobs.filter(j => j.customerId === customer);
+  if (type) jobs = jobs.filter(j => j.jobTypeId === type);
+  if (from) jobs = jobs.filter(j => { const d = j.completedAt ? (j.completedAt.toDate?j.completedAt.toDate():new Date(j.completedAt._seconds*1000)) : null; return d && d >= new Date(from); });
+  if (to) jobs = jobs.filter(j => { const d = j.completedAt ? (j.completedAt.toDate?j.completedAt.toDate():new Date(j.completedAt._seconds*1000)) : null; return d && d <= new Date(to + 'T23:59:59'); });
+
+  const tbody = document.querySelector('#analytics-jobs-table tbody');
+  if (tbody) tbody.innerHTML = renderAnalyticsJobRows(jobs);
+}
+
+// ── Jobs filter ──
+function applyJobsFilter() {
+  const status = document.getElementById('jf-status')?.value;
+  const customer = document.getElementById('jf-customer')?.value;
+  const type = document.getElementById('jf-type')?.value;
+
+  let jobs = state.data.jobs;
+  if (status) jobs = jobs.filter(j => j.status === status);
+  if (customer) jobs = jobs.filter(j => j.customerId === customer);
+  if (type) jobs = jobs.filter(j => j.jobTypeId === type);
+
+  const tbody = document.querySelector('#all-jobs-table tbody');
+  if (tbody) tbody.innerHTML = renderJobRows(jobs);
+}
+
+// ── Self-log field update ──
+function updateSelfLogFields(jobTypeId) {
+  const wrap = document.getElementById('self-log-fields');
+  if (!wrap || !jobTypeId) { if (wrap) wrap.innerHTML = ''; return; }
+  const fields = getJobFields(jobTypeId);
+  wrap.innerHTML = renderFieldInputs(fields);
+}
+
+// ── Show create job modal (from All Jobs) ──
+function showCreateJobModal() {
+  state.view = 'create-job'; renderNav(); renderView();
+}
+function showSelfLogModal() {
+  state.view = 'self-log'; renderNav(); renderView();
+}
+
+// ── Rate Table ──
+function renderRateTable() {
+  const customer = document.getElementById('rate-customer').value;
+  const wrap = document.getElementById('rate-table-wrap');
+  if (!customer) { wrap.innerHTML = ''; return; }
+  const rateCards = state.data.rateCards;
+  const jobTypes = [
+    { id: 'bts', fields: getJobFields('bts').filter(f => f.type === 'number') },
+    { id: 'kit', fields: getJobFields('kit').filter(f => f.type === 'number') },
+  ];
+
+  wrap.innerHTML = jobTypes.map(jt=>`
+    <div style="margin-top:16px">
+      <div style="font-weight:700;margin-bottom:8px">${jobTypeName(jt.id)}</div>
+      ${jt.fields.map(f=>`
+        <div class="toggle-row" style="margin-bottom:8px">
+          <label style="min-width:140px;font-size:13px">${f.label}</label>
+          <input type="number" min="0" step="0.01"
+            id="rate-${customer}-${jt.id}-${f.id}"
+            value="${(rateCards[customer]||{})[jt.id]?.[f.id]||0}"
+            style="width:100px;padding:6px;border:1px solid var(--border);border-radius:5px"/>
+          <span style="font-size:12px;color:var(--text-light)">per ${f.label.toLowerCase()}</span>
+        </div>`).join('')}
+    </div>`).join('');
+}
+
+async function saveRates() {
+  const customer = document.getElementById('rate-customer')?.value;
+  if (!customer) { toast('Select a customer first'); return; }
+
+  const jobTypes = [
+    { id: 'bts', fields: getJobFields('bts').filter(f => f.type === 'number') },
+    { id: 'kit', fields: getJobFields('kit').filter(f => f.type === 'number') },
+  ];
+
+  const newRates = JSON.parse(JSON.stringify(state.data.rateCards));
+  if (!newRates[customer]) newRates[customer] = {};
+
+  jobTypes.forEach(jt => {
+    if (!newRates[customer][jt.id]) newRates[customer][jt.id] = {};
+    jt.fields.forEach(f => {
+      const el = document.getElementById(`rate-${customer}-${jt.id}-${f.id}`);
+      if (el) newRates[customer][jt.id][f.id] = parseFloat(el.value) || 0;
+    });
+  });
+
+  try {
+    await apiFetch('/api/rates', { method: 'PUT', body: JSON.stringify(newRates) });
+    state.data.rateCards = newRates;
+    toast('Rates saved');
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+// ── User management ──
+async function updateUserRole(uid, role) {
+  try {
+    await apiFetch(`/api/users/${uid}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
+    const u = state.data.users.find(x => x.uid === uid);
+    if (u) u.role = role;
+    toast('Role updated');
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+async function updateUserCost(uid, hourlyCost) {
+  if (isNaN(hourlyCost) || hourlyCost < 0) { toast('Invalid cost'); return; }
+  try {
+    await apiFetch(`/api/users/${uid}/cost`, { method: 'PUT', body: JSON.stringify({ hourlyCost }) });
+    const u = state.data.users.find(x => x.uid === uid);
+    if (u) u.hourlyCost = hourlyCost;
+    toast('Cost updated');
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+async function deleteUser(uid) {
+  if (!confirm('Remove this user?')) return;
+  try {
+    await apiFetch(`/api/users/${uid}`, { method: 'DELETE' });
+    state.data.users = state.data.users.filter(u => u.uid !== uid);
+    toast('User removed');
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+// ── Teams ──
+function showCreateTeamModal() {
+  const users = state.data.users;
+  const managers = users.filter(u => u.role === 'manager' || u.role === 'admin');
+  const associates = users.filter(u => u.role === 'associate' || u.role === 'manager');
+
+  const overlay = showModal(`
+    <div class="modal-header"><h2>New Team</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="team-form">
+        <div class="form-group"><label>Team Name *</label><input type="text" name="name" required/></div>
+        <div class="form-group"><label>Manager</label>
+          <select name="managerId">
+            <option value="">None</option>
+            ${managers.map(u=>`<option value="${u.uid}">${u.displayName}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label>Members</label>
+          <select name="memberIds" multiple style="height:120px">
+            ${associates.map(u=>`<option value="${u.uid}">${u.displayName}</option>`).join('')}
+          </select>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitCreateTeam()">Create</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function submitCreateTeam() {
+  const form = document.getElementById('team-form');
+  const name = form.name.value.trim();
+  if (!name) { toast('Name required'); return; }
+  const managerId = form.managerId.value || null;
+  const memberIds = Array.from(form.memberIds.selectedOptions).map(o => o.value);
+  try {
+    const team = await apiFetch('/api/teams', { method: 'POST', body: JSON.stringify({ name, managerId, memberIds }) });
+    state.data.teams.push(team);
+    document.querySelector('.modal-overlay')?.remove();
+    toast('Team created');
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+async function editTeamModal(teamId) {
+  const team = state.data.teams.find(t => t.id === teamId);
+  if (!team) return;
+  const users = state.data.users;
+  const managers = users.filter(u => u.role === 'manager' || u.role === 'admin');
+
+  const overlay = showModal(`
+    <div class="modal-header"><h2>Edit Team: ${team.name}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="edit-team-form">
+        <div class="form-group"><label>Team Name</label><input type="text" name="name" value="${team.name}"/></div>
+        <div class="form-group"><label>Manager</label>
+          <select name="managerId">
+            <option value="">None</option>
+            ${managers.map(u=>`<option value="${u.uid}" ${team.managerId===u.uid?'selected':''}>${u.displayName}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label>Members</label>
+          <select name="memberIds" multiple style="height:120px">
+            ${users.map(u=>`<option value="${u.uid}" ${(team.memberIds||[]).includes(u.uid)?'selected':''}>${u.displayName}</option>`).join('')}
+          </select>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitEditTeam('${teamId}')">Save</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function submitEditTeam(teamId) {
+  const form = document.getElementById('edit-team-form');
+  const update = {
+    name: form.name.value.trim(),
+    managerId: form.managerId.value || null,
+    memberIds: Array.from(form.memberIds.selectedOptions).map(o => o.value),
+  };
+  try {
+    await apiFetch(`/api/teams/${teamId}`, { method: 'PUT', body: JSON.stringify(update) });
+    const idx = state.data.teams.findIndex(t => t.id === teamId);
+    if (idx >= 0) state.data.teams[idx] = { ...state.data.teams[idx], ...update };
+    document.querySelector('.modal-overlay')?.remove();
+    toast('Team updated');
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+async function deleteTeam(teamId) {
+  if (!confirm('Delete this team?')) return;
+  try {
+    await apiFetch(`/api/teams/${teamId}`, { method: 'DELETE' });
+    state.data.teams = state.data.teams.filter(t => t.id !== teamId);
+    toast('Team deleted');
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
+// ── CSV export ──
+async function exportCSV() {
+  try {
+    const token = await getToken();
+    const a = document.createElement('a');
+    a.href = `/api/export/csv?_t=${token}`;
+    // Use fetch with auth header instead
+    const resp = await fetch('/api/export/csv', { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) throw new Error('Export failed');
+    const blob = await resp.blob();
+    a.href = URL.createObjectURL(blob);
+    a.download = `warehouse-jobs-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    toast('Export error: ' + err.message, 3000);
+  }
+}
+
+// Expose to onclick handlers
+Object.assign(window, {
+  openJobModal, openCompleteModal, submitComplete, assignAssociate,
+  deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields,
+  showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
+  updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,
+  submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
+});
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('SW registration failed:', err);
+    });
+  });
+}
+</script>
+</body>
+</html>
