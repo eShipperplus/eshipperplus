@@ -617,8 +617,13 @@ function renderFieldInputs(fields, values = {}) {
   return fields.map(f => `
     <div class="form-group">
       <label>${f.label}${f.required ? ' *' : ''}</label>
-      <input type="${f.type || 'text'}" name="${f.id}" value="${values[f.id] || ''}"
-        placeholder="${f.label}" ${f.required ? 'required' : ''}/>
+      ${f.type === 'select' && (f.options||[]).length
+        ? `<select name="${f.id}" ${f.required ? 'required' : ''} style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;background:#fff">
+            <option value="">— Select —</option>
+            ${(f.options||[]).map(o=>`<option value="${o}"${values[f.id]===o?' selected':''}>${o}</option>`).join('')}
+           </select>`
+        : `<input type="${f.type === 'select' ? 'text' : (f.type || 'text')}" name="${f.id}" value="${values[f.id] || ''}"
+            placeholder="${f.label}" ${f.required ? 'required' : ''}/>` }
     </div>
   `).join('');
 }
@@ -812,7 +817,7 @@ function renderJobRows(jobs) {
   return jobs.map(j=>`<tr>
     <td>${j.customerId}</td>
     <td>${jobTypeName(j.jobTypeId)}</td>
-    <td>${statusBadge(j.status)}</td>
+    <td>${statusBadge(j.status)}${(j.locations||[]).length ? `<span style="font-size:11px;color:var(--text-light);margin-left:5px">${(j.locations||[]).filter(l=>l.status==='done').length}/${(j.locations||[]).length}</span>` : ''}</td>
     <td>${j.billable?'✅':'❌'}</td>
     <td>${fmtDate(j.createdAt)}</td>
     <td>${j.createdByName||'—'}</td>
@@ -1353,23 +1358,32 @@ function showAddJobTypeModal() {
   addFieldRow();
 }
 
-function addFieldRow(fieldId='', label='', type='text', required=false) {
+function addFieldRow(fieldId='', label='', type='text', required=false, options='') {
   const list = document.getElementById('jt-fields-list');
   if (!list) return;
   const row = document.createElement('div');
   row.className = 'field-row';
+  row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px';
   row.innerHTML = `
-    <input type="text" placeholder="field_id" value="${fieldId}" style="flex:1;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
-    <input type="text" placeholder="Label" value="${label}" style="flex:1.5;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
-    <select style="padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px">
+    <input type="text" placeholder="field_id" value="${fieldId}" style="flex:1;min-width:90px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
+    <input type="text" placeholder="Label" value="${label}" style="flex:1.5;min-width:110px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
+    <select class="field-type-sel" onchange="toggleOptionsInput(this)" style="padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px">
       <option value="text" ${type==='text'?'selected':''}>text</option>
       <option value="number" ${type==='number'?'selected':''}>number</option>
+      <option value="select" ${type==='select'?'selected':''}>dropdown</option>
     </select>
+    <input type="text" class="field-options-input" placeholder="Option 1, Option 2, …" value="${options}"
+      style="flex:2;min-width:150px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px;display:${type==='select'?'block':'none'}"/>
     <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap">
       <input type="checkbox" ${required?'checked':''}/> Required
     </label>
     <button onclick="this.parentElement.remove()" style="background:var(--danger);color:#fff;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px">✕</button>`;
   list.appendChild(row);
+}
+
+function toggleOptionsInput(sel) {
+  const optInput = sel.parentElement.querySelector('.field-options-input');
+  if (optInput) optInput.style.display = sel.value === 'select' ? 'block' : 'none';
 }
 
 async function submitNewJobType() {
@@ -1407,7 +1421,7 @@ function showEditJobTypeModal(id) {
       <button class="btn btn-primary" onclick="submitEditJobType('${id}')">Save</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
-  (jt.fields||[]).forEach(f => addFieldRow(f.id, f.label, f.type||'text', f.required||false));
+  (jt.fields||[]).forEach(f => addFieldRow(f.id, f.label, f.type||'text', f.required||false, (f.options||[]).join(', ')));
 }
 
 async function submitEditJobType(id) {
@@ -1433,7 +1447,9 @@ function collectFieldRows() {
     const required = row.querySelector('input[type=checkbox]')?.checked || false;
     const fieldId = inputs[0]?.value.trim().replace(/\s+/g,'_').toLowerCase();
     const label = inputs[1]?.value.trim();
-    if (fieldId && label) fields.push({ id: fieldId, label, type: select?.value || 'text', required });
+    const optionsRaw = row.querySelector('.field-options-input')?.value.trim() || '';
+    const options = select?.value === 'select' ? optionsRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+    if (fieldId && label) fields.push({ id: fieldId, label, type: select?.value || 'text', required, ...(options.length ? { options } : {}) });
   });
   return fields;
 }
@@ -2824,7 +2840,7 @@ Object.assign(window, {
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
   uploadCustomersCSV, addCustomer, removeCustomer,
   uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
-  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, submitNewJobType, submitEditJobType,
+  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, toggleOptionsInput, submitNewJobType, submitEditJobType,
   showInviteUserModal, submitInviteUser, assignUserTeam,
   showEditUserModal, submitEditUser, getPasswordResetLink,
   editCustomer, saveCustomerEdit,
