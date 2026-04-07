@@ -212,6 +212,7 @@ tr:hover td { background: #f0f4ff; }
   <div id="offline-banner">⚠ You are offline — jobs will sync when reconnected</div>
   <div id="topbar">
     <div class="logo">eShipper<span>+</span> Warehouse</div>
+    <button id="refresh-btn" onclick="manualRefresh()" title="Refresh" style="background:none;border:none;color:rgba(255,255,255,0.8);font-size:20px;cursor:pointer;padding:4px 8px;line-height:1">↻</button>
     <div class="user-avatar" id="topbar-user"></div>
     <button class="btn btn-ghost btn-sm" id="signout-btn" style="color:#fff;border-color:rgba(255,255,255,0.4)">Sign Out</button>
   </div>
@@ -440,12 +441,31 @@ onAuthStateChanged(firebaseAuth, async (fbUser) => {
         renderView();
       }
     }, 50 * 60 * 1000);
+
+    // Auto-refresh data every 30 seconds so assigned jobs appear without manual refresh
+    setInterval(async () => {
+      if (!document.hidden) { // Only refresh when tab/app is visible
+        await loadData();
+        renderView();
+      }
+    }, 30 * 1000);
+
   } else {
     state.user = null;
     document.getElementById('signin-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
   }
 });
+
+async function manualRefresh() {
+  const btn = document.getElementById('refresh-btn');
+  if (btn) { btn.style.transform = 'rotate(360deg)'; btn.style.transition = 'transform 0.5s'; }
+  await loadData();
+  renderNav();
+  renderView();
+  setTimeout(() => { if (btn) { btn.style.transform = ''; btn.style.transition = ''; } }, 500);
+  toast('Refreshed', 1500);
+}
 
 // ── Data Load ──
 async function loadData() {

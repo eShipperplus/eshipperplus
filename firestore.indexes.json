@@ -49,6 +49,14 @@
       ]
     },
     {
+      "collectionGroup": "wh_jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedAssocId", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "wh_audit",
       "queryScope": "COLLECTION",
       "fields": [
