@@ -1268,9 +1268,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
   {kpi(pp+ppa,"Past SLA (All)","#dc2626",onclick="showKpi('past_sla')")}
   {kpi(bp+bpa,"Breaching SLA","#d97706",onclick="showKpi('breaching_sla')")}
 </div>
-<div class="chart-row" style="margin-top:1.5rem">
-  {urgency_chart(all_pick, all_pack)}
-  {today_bar(today_df)}
+<div style="margin-top:1.5rem">
+  {hourly_section(hourly_df)}
 </div>
 <div class="section-title" style="margin-top:1.5rem">Picking \u2014 Client Summary</div>
 <div class="pivot-row">
