@@ -1736,15 +1736,23 @@ function handleLocationCSV(input) {
       const rows = parseCSV(e.target.result);
       if (!rows.length) { toast('CSV is empty or has no data rows'); return; }
       const headers = Object.keys(rows[0]);
-      // Use "Location" column as name if it exists, otherwise first column
-      const nameCol = headers.find(h => /^location$/i.test(h.trim())) || headers[0];
+
+      // Columns where every row is empty → associate fills these in (capture fields)
+      // Columns where at least one row has a value → reference data shown as context
+      const refCols = headers.filter(h => rows.some(r => (r[h] || '').trim()));
+      const captureCols = headers.filter(h => rows.every(r => !(r[h] || '').trim()));
+
+      // Store capture cols globally so submitCreateJob can include them
+      window._csvCaptureCols = captureCols;
+
+      const nameCol = refCols.find(h => /^location$/i.test(h.trim())) || refCols[0] || headers[0];
       const list = document.getElementById('cj-locations-list');
       list.innerHTML = '';
       rows.forEach((row, i) => {
         const name = (row[nameCol] || '').trim() || `Row ${i + 1}`;
         const referenceData = {};
-        headers.forEach(h => { referenceData[h] = row[h] || ''; });
-        const refSummary = headers.slice(0, 4).map(h => `<span style="color:var(--text-light)">${h}:</span> ${row[h]||'—'}`).join(' &nbsp;·&nbsp; ');
+        refCols.forEach(h => { referenceData[h] = row[h] || ''; });
+        const refSummary = refCols.map(h => `<span style="color:var(--text-light)">${h}:</span> ${row[h]||'—'}`).join(' &nbsp;·&nbsp; ');
         const div = document.createElement('div');
         div.className = 'loc-row';
         div.dataset.locJson = JSON.stringify({ name, referenceData });
@@ -1754,7 +1762,13 @@ function handleLocationCSV(input) {
         list.appendChild(div);
       });
       const info = document.getElementById('cj-loc-csv-info');
-      if (info) { info.textContent = `${rows.length} locations loaded from CSV (${headers.join(', ')})`; info.style.display = 'block'; }
+      if (info) {
+        let msg = `${rows.length} locations loaded`;
+        if (refCols.length) msg += ` — context: ${refCols.join(', ')}`;
+        if (captureCols.length) msg += ` — associate fills in: ${captureCols.join(', ')}`;
+        info.style.cssText = 'font-size:12px;margin-bottom:8px;padding:8px;background:#ebf8ff;border-radius:6px;display:block';
+        info.textContent = msg;
+      }
       toast(`${rows.length} locations loaded`);
     } catch(err) { toast('CSV parse error: ' + err.message); }
   };
@@ -1785,6 +1799,11 @@ async function submitCreateJob(e) {
     notes: form.notes.value,
     instructions: form.instructions.value,
     locations,
+    csvCaptureFields: (window._csvCaptureCols || []).map(name => ({
+      id: name.toLowerCase().replace(/\s+/g, '_'),
+      label: name,
+      type: 'text',
+    })),
   };
   if (!body.jobTypeId || !body.customerId) { toast('Select customer and job type'); return; }
   try {
@@ -2238,7 +2257,7 @@ function openMarkLocationDoneModal(jobId, locId) {
   const loc = (job?.locations||[]).find(l => l.id === locId);
   if (!loc) return;
   delete _pendingPhotos[`${jobId}_${locId}`];
-  const captureFields = getJobFields(job.jobTypeId);
+  const captureFields = (job.csvCaptureFields && job.csvCaptureFields.length) ? job.csvCaptureFields : getJobFields(job.jobTypeId);
   const refEntries = Object.entries(loc.referenceData || {}).filter(([,v]) => v);
   const refHtml = refEntries.length ? `
     <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;padding:10px;margin-bottom:14px">
@@ -2280,7 +2299,7 @@ function openMarkLocationDoneModal(jobId, locId) {
 
 async function submitMarkLocationDone(jobId, locId) {
   const job = state.data.jobs.find(j => j.id === jobId);
-  const captureFields = getJobFields(job?.jobTypeId);
+  const captureFields = (job?.csvCaptureFields && job.csvCaptureFields.length) ? job.csvCaptureFields : getJobFields(job?.jobTypeId);
   const captureForm = document.getElementById('loc-capture-form');
   const capturedData = captureForm ? collectFields(captureForm, captureFields) : {};
   const assocNotes = document.getElementById('loc-done-notes')?.value || '';
@@ -2726,7 +2745,7 @@ async function exportCSV() {
 Object.assign(window, {
   openJobModal, openCompleteModal, submitComplete, assignAssociate,
   openSubmitReviewModal, submitForReview, openReviewCompleteModal, submitReviewComplete,
-  addLocationRow, showAssignLocationsModal, submitAssignLocations,
+  addLocationRow, handleLocationCSV, showAssignLocationsModal, submitAssignLocations,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
   exportJobLocations,
   deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields,

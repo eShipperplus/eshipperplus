@@ -275,7 +275,7 @@ app.get('/api/init', requireAuth, async (req, res) => {
 app.post('/api/jobs', requireAuth, async (req, res) => {
   try {
     const { user, uid } = req;
-    const { jobTypeId, customerId, fields, billable, dueDate, notes, assignedManagerId, instructions, locations } = req.body;
+    const { jobTypeId, customerId, fields, billable, dueDate, notes, assignedManagerId, instructions, locations, csvCaptureFields } = req.body;
 
     if (!jobTypeId || !customerId) {
       return res.status(400).json({ error: 'jobTypeId and customerId are required' });
@@ -303,12 +303,15 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
         id: l.id || ('loc_' + Date.now() + '_' + i),
         name: l.name || '',
         instructions: l.instructions || '',
+        referenceData: l.referenceData || {},
         assignedAssocId: null,
         assignedAssocName: '',
         status: 'pending',
+        capturedData: {},
         assocNotes: '',
         completedAt: null,
       })),
+      csvCaptureFields: (csvCaptureFields || []),
       createdBy: uid,
       createdByName: user.displayName,
       createdByEmail: user.email,
