@@ -4,7 +4,9 @@ const express = require('express');
 const { initializeApp, cert } = require('firebase-admin/app');
 const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
+const { getStorage } = require('firebase-admin/storage');
 const { Parser } = require('json2csv');
+const XLSX = require('xlsx');
 const helmet = require('helmet');
 const cors = require('cors');
 const path = require('path');
@@ -14,10 +16,14 @@ const firebaseConfig = process.env.FIREBASE_SERVICE_ACCOUNT
   ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
   : undefined;
 
-initializeApp(firebaseConfig ? { credential: cert(firebaseConfig) } : undefined);
+const STORAGE_BUCKET = 'eshipper-f56c3.firebasestorage.app';
+initializeApp(firebaseConfig
+  ? { credential: cert(firebaseConfig), storageBucket: STORAGE_BUCKET }
+  : { storageBucket: STORAGE_BUCKET });
 
 const db = getFirestore();
 const auth = getAuth();
+const bucket = getStorage().bucket();
 
 // ─── Express Setup ────────────────────────────────────────────────────────────
 const app = express();
@@ -625,6 +631,103 @@ app.delete('/api/jobs/:id', requireAuth, requireRole('admin'), async (req, res) 
     res.json({ deleted: true });
   } catch (err) {
     console.error('DELETE /api/jobs/:id error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Photo Upload ─────────────────────────────────────────────────────────────
+app.post('/api/jobs/:id/locations/:locId/photos', requireAuth, async (req, res) => {
+  try {
+    const { uid } = req;
+    const { imageData } = req.body; // base64 data URL
+    if (!imageData) return res.status(400).json({ error: 'imageData required' });
+
+    const base64 = imageData.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(base64, 'base64');
+
+    const ext = imageData.startsWith('data:image/png') ? 'png' : 'jpg';
+    const fileName = `jobs/${req.params.id}/locations/${req.params.locId}/${Date.now()}_${uid}.${ext}`;
+    const file = bucket.file(fileName);
+    await file.save(buffer, {
+      metadata: { contentType: ext === 'png' ? 'image/png' : 'image/jpeg' },
+    });
+    await file.makePublic();
+    const url = `https://storage.googleapis.com/${STORAGE_BUCKET}/${fileName}`;
+
+    // Append URL to the location's photos array
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    const job = jobSnap.data();
+    const updatedLocations = (job.locations || []).map(l =>
+      l.id === req.params.locId ? { ...l, photos: [...(l.photos || []), url] } : l
+    );
+    await db.collection('wh_jobs').doc(req.params.id).update({ locations: updatedLocations });
+    res.json({ url });
+  } catch (err) {
+    console.error('Photo upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Locations Excel Export ────────────────────────────────────────────────────
+app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
+  try {
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    const job = { id: jobSnap.id, ...jobSnap.data() };
+
+    const locations = job.locations || [];
+    if (!locations.length) return res.status(400).json({ error: 'This job has no locations' });
+
+    // Collect all reference data column names (union across all locations)
+    const refCols = [...new Set(locations.flatMap(l => Object.keys(l.referenceData || {})))];
+
+    // Get job type capture field definitions
+    const jobTypesDoc = await db.collection('wh_config').doc('jobTypes').get();
+    const allJobTypes = jobTypesDoc.exists ? (jobTypesDoc.data().list || []) : Object.values(JOB_TYPE_DEFS);
+    const jobTypeDef = allJobTypes.find(jt => jt.id === job.jobTypeId) || JOB_TYPE_DEFS[job.jobTypeId];
+    const captureFields = jobTypeDef?.fields || [];
+
+    // Build rows
+    const rows = locations.map(l => {
+      const row = {};
+      refCols.forEach(col => { row[col] = (l.referenceData || {})[col] || ''; });
+      captureFields.forEach(f => { row[f.label] = (l.capturedData || {})[f.id] ?? ''; });
+      row['Status'] = l.status === 'done' ? 'Done' : 'Pending';
+      row['Assigned To'] = l.assignedAssocName || '';
+      row['Completed At'] = l.completedAt ? new Date(l.completedAt._seconds * 1000).toLocaleString('en-CA') : '';
+      row['Notes'] = l.assocNotes || '';
+      row['Photos'] = (l.photos || []).join('\n');
+      return row;
+    });
+
+    const wb = XLSX.utils.book_new();
+    // Locations sheet
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, 'Locations');
+    // Job summary sheet
+    const summary = [
+      { Field: 'Customer', Value: job.customerId },
+      { Field: 'Job Type', Value: job.jobTypeId },
+      { Field: 'Status', Value: job.status },
+      { Field: 'Created By', Value: job.createdByName || '' },
+      { Field: 'Created At', Value: job.createdAt ? new Date(job.createdAt._seconds * 1000).toLocaleString('en-CA') : '' },
+      { Field: 'Manager', Value: job.assignedManagerName || '' },
+      { Field: 'Instructions', Value: job.instructions || '' },
+      { Field: 'Total Locations', Value: locations.length },
+      { Field: 'Completed', Value: locations.filter(l => l.status === 'done').length },
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'Summary');
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const filename = `${job.customerId}-${job.jobTypeId}-locations.xlsx`.replace(/[^a-z0-9._-]/gi, '_');
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(buf);
+  } catch (err) {
+    console.error('Locations export error:', err);
     res.status(500).json({ error: err.message });
   }
 });

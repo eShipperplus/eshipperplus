@@ -1859,6 +1859,8 @@ async function openJobModal(jobId) {
         `<button class="btn btn-teal" onclick="this.closest('.modal-overlay').remove();openSubmitReviewModal('${job.id}')">Submit for Review</button>`:''}
       ${(state.user.role==='admin'||state.user.role==='manager'||job.createdBy===state.user?.uid)?
         `<button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove();showEditJobModal('${job.id}')">✏ Edit</button>`:''}
+      ${(job.locations||[]).length && (state.user.role==='admin'||state.user.role==='manager')?
+        `<button class="btn btn-ghost" onclick="exportJobLocations('${job.id}')">⬇ Export Excel</button>`:''}
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
     </div>`);
 }
@@ -2186,11 +2188,56 @@ async function submitAssignLocations(jobId) {
   } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
+// ── Photo helpers ──
+const _pendingPhotos = {};
+
+async function compressImage(file) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const blobUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 1400;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(blobUrl);
+      resolve(canvas.toDataURL('image/jpeg', 0.78));
+    };
+    img.src = blobUrl;
+  });
+}
+
+async function handleLocationPhotoSelect(input, jobId, locId) {
+  const files = [...input.files];
+  if (!files.length) return;
+  const key = `${jobId}_${locId}`;
+  if (!_pendingPhotos[key]) _pendingPhotos[key] = [];
+  const preview = document.getElementById('loc-photos-preview');
+  for (const file of files) {
+    const ph = document.createElement('div');
+    ph.style.cssText = 'width:64px;height:64px;border-radius:6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0';
+    ph.textContent = '⏳';
+    preview?.appendChild(ph);
+    try {
+      const imageData = await compressImage(file);
+      const result = await apiFetch(`/api/jobs/${jobId}/locations/${locId}/photos`, {
+        method: 'POST', body: JSON.stringify({ imageData }),
+      });
+      _pendingPhotos[key].push(result.url);
+      ph.innerHTML = `<img src="${result.url}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;cursor:pointer" onclick="window.open('${result.url}','_blank')"/>`;
+    } catch(err) { ph.textContent = '❌'; toast('Photo failed: ' + err.message, 3000); }
+  }
+  input.value = '';
+}
+
 // ── Mark Location Done Modal (Associate) ──
 function openMarkLocationDoneModal(jobId, locId) {
   const job = state.data.jobs.find(j => j.id === jobId);
   const loc = (job?.locations||[]).find(l => l.id === locId);
   if (!loc) return;
+  delete _pendingPhotos[`${jobId}_${locId}`];
   const captureFields = getJobFields(job.jobTypeId);
   const refEntries = Object.entries(loc.referenceData || {}).filter(([,v]) => v);
   const refHtml = refEntries.length ? `
@@ -2202,6 +2249,9 @@ function openMarkLocationDoneModal(jobId, locId) {
   const fieldsHtml = captureFields.length ? `
     <div style="font-size:13px;font-weight:600;margin:12px 0 8px">Fill in</div>
     <form id="loc-capture-form">${renderFieldInputs(captureFields, loc.capturedData||{})}</form>` : '';
+  const existingPhotos = (loc.photos||[]).map(url =>
+    `<img src="${url}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;cursor:pointer" onclick="window.open('${url}','_blank')"/>`
+  ).join('');
   showModal(`
     <div class="modal-header"><h2>${loc.name}</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
@@ -2212,6 +2262,15 @@ function openMarkLocationDoneModal(jobId, locId) {
       <div class="form-group" style="margin-top:12px"><label>Notes <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
         <textarea id="loc-done-notes" rows="2" placeholder="Any observations, issues found, etc." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical"></textarea>
       </div>
+      <div class="form-group" style="margin-top:12px">
+        <label>Photos <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
+        <div id="loc-photos-preview" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${existingPhotos}</div>
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+          📷 Take / Add Photo
+          <input type="file" accept="image/*" capture="environment" multiple style="display:none"
+            onchange="handleLocationPhotoSelect(this,'${jobId}','${locId}')"/>
+        </label>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-teal" id="loc-done-btn" onclick="submitMarkLocationDone('${jobId}','${locId}')">Mark as Done</button>
@@ -2221,7 +2280,6 @@ function openMarkLocationDoneModal(jobId, locId) {
 
 async function submitMarkLocationDone(jobId, locId) {
   const job = state.data.jobs.find(j => j.id === jobId);
-  const loc = (job?.locations||[]).find(l => l.id === locId);
   const captureFields = getJobFields(job?.jobTypeId);
   const captureForm = document.getElementById('loc-capture-form');
   const capturedData = captureForm ? collectFields(captureForm, captureFields) : {};
@@ -2232,6 +2290,7 @@ async function submitMarkLocationDone(jobId, locId) {
     const result = await apiFetch(`/api/jobs/${jobId}/locations/${locId}/done`, {
       method: 'PUT', body: JSON.stringify({ assocNotes, capturedData }),
     });
+    delete _pendingPhotos[`${jobId}_${locId}`];
     document.querySelector('.modal-overlay')?.remove();
     await loadData();
     renderView();
@@ -2625,6 +2684,25 @@ async function deleteTeam(teamId) {
   }
 }
 
+// ── Locations Excel export ──
+async function exportJobLocations(jobId) {
+  try {
+    const token = await getToken();
+    const resp = await fetch(`/api/jobs/${jobId}/export/locations`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) { const b = await resp.json().catch(()=>{}); throw new Error(b?.error || 'Export failed'); }
+    const blob = await resp.blob();
+    const job = state.data.jobs.find(j => j.id === jobId);
+    const name = `${job?.customerId||'job'}-locations.xlsx`.replace(/[^a-z0-9._-]/gi,'_');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch(err) { toast('Export error: ' + err.message, 3000); }
+}
+
 // ── CSV export ──
 async function exportCSV() {
   try {
@@ -2648,7 +2726,9 @@ async function exportCSV() {
 Object.assign(window, {
   openJobModal, openCompleteModal, submitComplete, assignAssociate,
   openSubmitReviewModal, submitForReview, openReviewCompleteModal, submitReviewComplete,
-  addLocationRow, showAssignLocationsModal, submitAssignLocations, openMarkLocationDoneModal, submitMarkLocationDone,
+  addLocationRow, showAssignLocationsModal, submitAssignLocations,
+  openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
+  exportJobLocations,
   deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
   updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,
