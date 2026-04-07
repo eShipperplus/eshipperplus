@@ -1331,56 +1331,154 @@ async function deleteJobType(id) {
 
 // ── Users & Teams ──
 function renderUsersTeams() {
-  const users = state.data.users;
-  const teams = state.data.teams;
+  const users = state.data.users || [];
+  const teams = state.data.teams || [];
   return `
     <div class="section-header"><h1>Users & Teams</h1>
-      <button class="btn btn-primary" onclick="showCreateTeamModal()">+ New Team</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-teal" onclick="showInviteUserModal()">+ Invite User</button>
+        <button class="btn btn-primary" onclick="showCreateTeamModal()">+ New Team</button>
+      </div>
     </div>
     <div class="card">
-      <div class="card-title">Users</div>
+      <div class="card-title">Users (${users.length})</div>
       <div class="tbl-wrap">
         <table>
           <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Hourly Cost</th><th>Last Seen</th><th>Actions</th></tr></thead>
-          <tbody>${users.map(u=>`<tr>
-            <td>${u.displayName}</td>
-            <td>${u.email}</td>
-            <td>
-              <select onchange="updateUserRole('${u.uid}', this.value)" style="font-size:12px;padding:3px">
-                ${['admin','manager','associate','office_support'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join('')}
-              </select>
-            </td>
-            <td>${teams.find(t=>t.memberIds?.includes(u.uid))?.name||'—'}</td>
-            <td>
-              <input type="number" value="${u.hourlyCost||0}" min="0" step="0.01"
-                style="width:80px;padding:3px;border:1px solid var(--border);border-radius:4px;font-size:12px"
-                onchange="updateUserCost('${u.uid}', parseFloat(this.value))"/>
-            </td>
-            <td>${fmtDate(u.lastSeen)}</td>
-            <td>${u.uid !== state.user.uid ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.uid}')">Del</button>` : '<em>You</em>'}</td>
-          </tr>`).join('')}
+          <tbody>${users.length ? users.map(u => {
+            const userTeam = teams.find(t => t.memberIds?.includes(u.uid));
+            return `<tr>
+              <td style="display:flex;align-items:center;gap:8px">
+                <div class="user-avatar" style="width:28px;height:28px;font-size:11px">${(u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')}</div>
+                ${u.displayName}
+              </td>
+              <td>${u.email}</td>
+              <td>
+                <select onchange="updateUserRole('${u.uid}', this.value)" style="font-size:12px;padding:3px;border-radius:4px;border:1px solid var(--border)">
+                  ${['admin','manager','associate','office_support'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${r.replace('_',' ')}</option>`).join('')}
+                </select>
+              </td>
+              <td>
+                <select onchange="assignUserTeam('${u.uid}', this.value)" style="font-size:12px;padding:3px;border-radius:4px;border:1px solid var(--border)">
+                  <option value="">— No team —</option>
+                  ${teams.map(t=>`<option value="${t.id}" ${userTeam?.id===t.id?'selected':''}>${t.name}</option>`).join('')}
+                </select>
+              </td>
+              <td>
+                <input type="number" value="${u.hourlyCost||0}" min="0" step="0.01"
+                  style="width:80px;padding:3px;border:1px solid var(--border);border-radius:4px;font-size:12px"
+                  onchange="updateUserCost('${u.uid}', parseFloat(this.value))"/>
+              </td>
+              <td>${fmtDate(u.lastSeen)}</td>
+              <td>${u.uid !== state.user?.uid ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.uid}')">Remove</button>` : '<span style="color:var(--text-light);font-size:12px">You</span>'}</td>
+            </tr>`;
+          }).join('') : '<tr><td colspan="7" class="empty-state">No users yet. Invite someone to get started.</td></tr>'}
           </tbody>
         </table>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Teams</div>
+      <div class="card-title">Teams (${teams.length})</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Team</th><th>Manager</th><th>Members</th><th>Actions</th></tr></thead>
-          <tbody>${teams.map(t=>`<tr>
-            <td>${t.name}</td>
-            <td>${users.find(u=>u.uid===t.managerId)?.displayName||'—'}</td>
-            <td>${(t.memberIds||[]).map(id=>users.find(u=>u.uid===id)?.displayName||id).join(', ')||'—'}</td>
-            <td>
-              <button class="btn btn-ghost btn-sm" onclick="editTeamModal('${t.id}')">Edit</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteTeam('${t.id}')">Del</button>
-            </td>
-          </tr>`).join('')}
+          <thead><tr><th>Team Name</th><th>Manager</th><th>Members</th><th>Actions</th></tr></thead>
+          <tbody>${teams.length ? teams.map(t => {
+            const members = (t.memberIds||[]).map(id => users.find(u=>u.uid===id)).filter(Boolean);
+            return `<tr>
+              <td style="font-weight:600">${t.name}</td>
+              <td>${users.find(u=>u.uid===t.managerId)?.displayName||'—'}</td>
+              <td>
+                ${members.length ? members.map(u=>`<span style="display:inline-flex;align-items:center;gap:4px;background:#e9d8fd;color:#553c9a;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;margin:2px">${u.displayName}</span>`).join('') : '<span style="color:var(--text-light);font-size:12px">No members</span>'}
+              </td>
+              <td style="display:flex;gap:6px">
+                <button class="btn btn-ghost btn-sm" onclick="editTeamModal('${t.id}')">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteTeam('${t.id}')">Delete</button>
+              </td>
+            </tr>`;
+          }).join('') : '<tr><td colspan="4" class="empty-state">No teams yet.</td></tr>'}
           </tbody>
         </table>
       </div>
     </div>`;
+}
+
+async function showInviteUserModal() {
+  const teams = state.data.teams || [];
+  showModal(`
+    <div class="modal-header"><h2>Invite User</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-light);margin-bottom:16px">
+        Enter the user's details. When they sign in with this email, they'll automatically get the role and team you assign here.
+      </p>
+      <div class="form-group"><label>Full Name</label>
+        <input type="text" id="inv-name" placeholder="e.g. John Smith"/></div>
+      <div class="form-group"><label>Email Address *</label>
+        <input type="email" id="inv-email" placeholder="e.g. john@eshipperplus.com"/></div>
+      <div class="form-row">
+        <div class="form-group"><label>Role</label>
+          <select id="inv-role">
+            <option value="associate">Associate</option>
+            <option value="manager">Manager</option>
+            <option value="office_support">Office Support</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Assign to Team</label>
+          <select id="inv-team">
+            <option value="">— No team —</option>
+            ${teams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitInviteUser()">Send Invite</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function submitInviteUser() {
+  const email = document.getElementById('inv-email')?.value.trim();
+  const displayName = document.getElementById('inv-name')?.value.trim();
+  const role = document.getElementById('inv-role')?.value;
+  const teamId = document.getElementById('inv-team')?.value || null;
+  if (!email) { toast('Email is required'); return; }
+  try {
+    const result = await apiFetch('/api/users/invite', {
+      method: 'POST',
+      body: JSON.stringify({ email, displayName, role, teamId }),
+    });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadData();
+    renderView();
+    toast(result.status === 'updated'
+      ? `${email} updated — changes applied immediately`
+      : `Invite saved for ${email} — role & team applied when they sign in`, 4000);
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
+async function assignUserTeam(uid, teamId) {
+  try {
+    // Remove from all teams first, then add to selected team
+    const teams = state.data.teams || [];
+    await Promise.all(teams.map(t =>
+      apiFetch(`/api/teams/${t.id}/members`, {
+        method: 'PUT',
+        body: JSON.stringify({ action: 'remove', uid }),
+      }).catch(() => {})
+    ));
+    if (teamId) {
+      await apiFetch(`/api/teams/${teamId}/members`, {
+        method: 'PUT',
+        body: JSON.stringify({ action: 'add', uid }),
+      });
+    }
+    await loadData();
+    renderView();
+    toast('Team assignment updated');
+  } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
 // ── View Handlers (event wiring) ──
@@ -1875,6 +1973,7 @@ Object.assign(window, {
   uploadCustomersCSV, addCustomer, removeCustomer,
   uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
   showAddJobTypeModal, showEditJobTypeModal, addFieldRow, submitNewJobType, submitEditJobType,
+  showInviteUserModal, submitInviteUser, assignUserTeam,
 });
 </script>
 <script>

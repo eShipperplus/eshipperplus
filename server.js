@@ -77,20 +77,32 @@ async function requireAuth(req, res, next) {
     const snap = await userRef.get();
 
     if (!snap.exists) {
-      // Brand new user — default role is associate
-      // Check if custom claim already set (e.g. from a previous sign-up)
-      const claimRole = ROLES.includes(decoded.role) ? decoded.role : 'associate';
+      // Check if admin pre-invited this email
+      const inviteSnap = await db.collection('wh_invites').doc(decoded.email.toLowerCase()).get();
+      const invite = inviteSnap.exists ? inviteSnap.data() : null;
+
+      const claimRole = invite?.role || (ROLES.includes(decoded.role) ? decoded.role : 'associate');
       const userData = {
         uid: decoded.uid,
         email: decoded.email,
-        displayName: decoded.name || decoded.email,
+        displayName: invite?.displayName || decoded.name || decoded.email,
         role: claimRole,
-        teamId: null,
+        teamId: invite?.teamId || null,
         hourlyCost: 0,
         createdAt: Timestamp.now(),
         lastSeen: Timestamp.now(),
       };
       await userRef.set(userData);
+
+      // If invite had a team, add this user to the team's memberIds
+      if (invite?.teamId) {
+        db.collection('wh_teams').doc(invite.teamId).update({
+          memberIds: FieldValue.arrayUnion(decoded.uid),
+        }).catch(() => {});
+      }
+
+      // Consume the invite
+      if (invite) inviteSnap.ref.delete().catch(() => {});
       // Stamp custom claim if not already set
       if (!decoded.role) {
         auth.setCustomUserClaims(decoded.uid, { role: claimRole }).catch(() => {});
@@ -630,6 +642,49 @@ app.put('/api/users/:uid/cost', requireAuth, requireRole('admin'), async (req, r
   }
 });
 
+// Invite a user by email — pre-creates their role/team before they sign up
+app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { email, displayName, role, teamId } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    if (role && !ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
+
+    const emailKey = email.toLowerCase().trim();
+
+    // Check if user already exists in wh_users by email
+    const existingSnap = await db.collection('wh_users').where('email', '==', emailKey).limit(1).get();
+    if (!existingSnap.empty) {
+      // User already signed up — update their record directly
+      const existingDoc = existingSnap.docs[0];
+      const updates = {};
+      if (role) updates.role = role;
+      if (displayName) updates.displayName = displayName;
+      if (teamId !== undefined) updates.teamId = teamId;
+      await existingDoc.ref.update(updates);
+      if (role) await auth.setCustomUserClaims(existingDoc.id, { role }).catch(() => {});
+      if (teamId) {
+        await db.collection('wh_teams').doc(teamId).update({
+          memberIds: FieldValue.arrayUnion(existingDoc.id),
+        }).catch(() => {});
+      }
+      return res.json({ status: 'updated', uid: existingDoc.id });
+    }
+
+    // User hasn't signed up yet — store invite
+    await db.collection('wh_invites').doc(emailKey).set({
+      email: emailKey,
+      displayName: displayName || email.split('@')[0],
+      role: role || 'associate',
+      teamId: teamId || null,
+      invitedBy: req.uid,
+      invitedAt: Timestamp.now(),
+    });
+    res.json({ status: 'invited', email: emailKey });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/users/:uid', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     if (req.params.uid === req.uid) return res.status(400).json({ error: 'Cannot delete yourself' });
@@ -671,6 +726,27 @@ app.put('/api/teams/:id', requireAuth, requireRole('admin'), async (req, res) =>
     if (memberIds !== undefined) update.memberIds = memberIds;
     await db.collection('wh_teams').doc(req.params.id).update(update);
     res.json({ id: req.params.id, ...update });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add or remove a single member from a team
+app.put('/api/teams/:id/members', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { action, uid } = req.body; // action: 'add' | 'remove'
+    if (!uid) return res.status(400).json({ error: 'uid required' });
+    const update = action === 'add'
+      ? { memberIds: FieldValue.arrayUnion(uid) }
+      : { memberIds: FieldValue.arrayRemove(uid) };
+    await db.collection('wh_teams').doc(req.params.id).update(update);
+    // Keep wh_users.teamId in sync
+    if (action === 'add') {
+      await db.collection('wh_users').doc(uid).update({ teamId: req.params.id }).catch(() => {});
+    } else {
+      await db.collection('wh_users').doc(uid).update({ teamId: null }).catch(() => {});
+    }
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
