@@ -41,16 +41,9 @@ jobs:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         run: |
-          python3 -c '
-import os, yaml
-vars = {
-  "GCP_PROJECT": os.environ["FIREBASE_PROJECT_ID"],
-  "FIREBASE_SERVICE_ACCOUNT": os.environ["FIREBASE_SA_JSON"]
-}
-open("/tmp/envvars.yaml","w").write(yaml.dump(vars))
-'
+          python3 -c "import os,yaml; yaml.dump({'GCP_PROJECT':os.environ['FIREBASE_PROJECT_ID'],'FIREBASE_SERVICE_ACCOUNT':os.environ['FIREBASE_SA_JSON']},open('/tmp/ev.yaml','w'))"
           gcloud run services update warehouse-billing \
             --region northamerica-northeast2 \
             --project "$GCP_PROJECT_ID" \
-            --env-vars-file /tmp/envvars.yaml \
+            --env-vars-file /tmp/ev.yaml \
             --quiet
