@@ -20,7 +20,7 @@ jobs:
             --suppress-logs \
             --async
 
-      - name: Wait for Cloud Build to finish (poll every 20s, up to 10min)
+      - name: Wait for Cloud Build to finish
         run: |
           for i in $(seq 1 30); do
             STATUS=$(gcloud builds list \
@@ -35,28 +35,22 @@ jobs:
             sleep 20
           done
 
-      - name: Inject Firebase env vars into Cloud Run
+      - name: Write env vars file and update Cloud Run
         env:
           FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         run: |
-          python3 - << 'PYEOF'
-          import os, yaml, subprocess
-
-          env_vars = {
-              'GCP_PROJECT': os.environ['FIREBASE_PROJECT_ID'],
-              'FIREBASE_SERVICE_ACCOUNT': os.environ['FIREBASE_SA_JSON'],
-          }
-
-          with open('/tmp/cloudrun-env.yaml', 'w') as f:
-              yaml.dump(env_vars, f)
-
-          subprocess.run([
-              'gcloud', 'run', 'services', 'update', 'warehouse-billing',
-              '--region', 'northamerica-northeast2',
-              '--project', os.environ['GCP_PROJECT_ID'],
-              '--env-vars-file', '/tmp/cloudrun-env.yaml',
-              '--quiet'
-          ], check=True)
-          PYEOF
+          python3 -c '
+import os, yaml
+vars = {
+  "GCP_PROJECT": os.environ["FIREBASE_PROJECT_ID"],
+  "FIREBASE_SERVICE_ACCOUNT": os.environ["FIREBASE_SA_JSON"]
+}
+open("/tmp/envvars.yaml","w").write(yaml.dump(vars))
+'
+          gcloud run services update warehouse-billing \
+            --region northamerica-northeast2 \
+            --project "$GCP_PROJECT_ID" \
+            --env-vars-file /tmp/envvars.yaml \
+            --quiet
