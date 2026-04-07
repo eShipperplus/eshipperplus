@@ -1540,10 +1540,37 @@ async function submitInviteUser() {
     document.querySelector('.modal-overlay')?.remove();
     await loadData();
     renderView();
-    toast(result.status === 'updated'
-      ? `${email} updated — changes applied immediately`
-      : `Invite saved for ${email} — role & team applied when they sign in`, 4000);
+    if (result.resetLink) {
+      showPasswordLinkModal(email, result.resetLink, result.status === 'updated');
+    } else {
+      toast(result.status === 'updated'
+        ? `${email} updated — changes applied immediately`
+        : `Invite saved for ${email} — role & team applied when they sign in`, 4000);
+    }
   } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
+function showPasswordLinkModal(email, link, isUpdate) {
+  showModal(`
+    <div class="modal-header"><h2>${isUpdate ? 'User Updated' : 'User Invited'}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 12px">${isUpdate ? `${email} has been updated.` : `Account created for <strong>${email}</strong>.`} Share this password-set link with them:</p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="pw-link-input" value="${link}" readonly
+          style="flex:1;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#f7f8fc"/>
+        <button class="btn btn-primary" onclick="
+          navigator.clipboard.writeText(document.getElementById('pw-link-input').value);
+          this.textContent='Copied!';
+          setTimeout(()=>this.textContent='Copy',2000)
+        ">Copy</button>
+      </div>
+      <p style="margin:12px 0 0;font-size:12px;color:var(--text-light)">This link lets them set their own password. It expires in 1 hour.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
+    </div>`);
 }
 
 async function assignUserTeam(uid, teamId) {
@@ -2025,10 +2052,43 @@ function showEditUserModal(uid) {
         </select>
       </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-primary" onclick="submitEditUser('${uid}')">Save Changes</button>
-      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center">
+      <button class="btn btn-ghost" id="eu-reset-btn" onclick="getPasswordResetLink('${uid}')">🔑 Get Password Reset Link</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="submitEditUser('${uid}')">Save Changes</button>
+        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      </div>
     </div>`);
+}
+
+async function getPasswordResetLink(uid) {
+  const btn = document.getElementById('eu-reset-btn');
+  if (btn) { btn.textContent = 'Generating…'; btn.disabled = true; }
+  try {
+    const result = await apiFetch(`/api/users/${uid}/reset-password-link`, { method: 'POST' });
+    // Replace modal footer with link display
+    const footer = btn?.closest('.modal-footer');
+    if (footer) {
+      footer.innerHTML = `
+        <div style="width:100%">
+          <p style="margin:0 0 8px;font-size:13px">Share this link with <strong>${result.email}</strong> — expires in 1 hour:</p>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="eu-reset-link" value="${result.resetLink}" readonly
+              style="flex:1;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#f7f8fc"/>
+            <button class="btn btn-primary" onclick="
+              navigator.clipboard.writeText(document.getElementById('eu-reset-link').value);
+              this.textContent='Copied!';
+              setTimeout(()=>this.textContent='Copy',2000)
+            ">Copy</button>
+            <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
+          </div>
+        </div>`;
+    }
+  } catch(err) {
+    toast('Error: ' + err.message, 3000);
+    if (btn) { btn.textContent = '🔑 Get Password Reset Link'; btn.disabled = false; }
+  }
 }
 
 async function submitEditUser(uid) {
@@ -2226,8 +2286,8 @@ Object.assign(window, {
   uploadCustomersCSV, addCustomer, removeCustomer,
   uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
   showAddJobTypeModal, showEditJobTypeModal, addFieldRow, submitNewJobType, submitEditJobType,
-  showInviteUserModal, submitInviteUser, assignUserTeam,
-  showEditUserModal, submitEditUser,
+  showInviteUserModal, submitInviteUser, assignUserTeam, showPasswordLinkModal,
+  showEditUserModal, submitEditUser, getPasswordResetLink,
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
   showQuickAssignModal, submitQuickAssign,

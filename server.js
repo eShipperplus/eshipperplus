@@ -699,7 +699,7 @@ app.put('/api/users/:uid/cost', requireAuth, requireRole('admin'), async (req, r
   }
 });
 
-// Invite a user by email — pre-creates their role/team before they sign up
+// Invite a user by email — creates Firebase Auth account and returns a password-set link
 app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { email, displayName, role, teamId } = req.body;
@@ -707,6 +707,15 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
     if (role && !ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
 
     const emailKey = email.toLowerCase().trim();
+    const nameToUse = displayName || email.split('@')[0];
+
+    // Check if Firebase Auth user already exists
+    let authUser = null;
+    try {
+      authUser = await auth.getUserByEmail(emailKey);
+    } catch (e) {
+      if (e.code !== 'auth/user-not-found') throw e;
+    }
 
     // Check if user already exists in wh_users by email
     const existingSnap = await db.collection('wh_users').where('email', '==', emailKey).limit(1).get();
@@ -724,19 +733,50 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
           memberIds: FieldValue.arrayUnion(existingDoc.id),
         }).catch(() => {});
       }
-      return res.json({ status: 'updated', uid: existingDoc.id });
+      // Generate password reset link so admin can share it
+      const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
+      return res.json({ status: 'updated', uid: existingDoc.id, resetLink });
     }
 
-    // User hasn't signed up yet — store invite
+    // Create Firebase Auth account if it doesn't exist yet
+    if (!authUser) {
+      authUser = await auth.createUser({
+        email: emailKey,
+        displayName: nameToUse,
+        emailVerified: false,
+      });
+    }
+
+    // Set custom claims for role immediately
+    const claimRole = role || 'associate';
+    await auth.setCustomUserClaims(authUser.uid, { role: claimRole });
+
+    // Store invite so requireAuth picks up role/team on first sign-in
     await db.collection('wh_invites').doc(emailKey).set({
       email: emailKey,
-      displayName: displayName || email.split('@')[0],
-      role: role || 'associate',
+      displayName: nameToUse,
+      role: claimRole,
       teamId: teamId || null,
       invitedBy: req.uid,
       invitedAt: Timestamp.now(),
     });
-    res.json({ status: 'invited', email: emailKey });
+
+    // Generate a password-set link (looks like password reset but lets them choose their password)
+    const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
+
+    res.json({ status: 'invited', email: emailKey, uid: authUser.uid, resetLink });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate a password reset link for any user (admin only)
+app.post('/api/users/:uid/reset-password-link', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const userRecord = await auth.getUser(req.params.uid);
+    if (!userRecord.email) return res.status(400).json({ error: 'User has no email address' });
+    const resetLink = await auth.generatePasswordResetLink(userRecord.email);
+    res.json({ resetLink, email: userRecord.email });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
