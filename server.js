@@ -58,6 +58,12 @@ const JOB_TYPE_DEFS = {
 };
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
+// ADMIN_EMAILS: comma-separated list of emails that always get admin role
+// Set in Cloud Run env vars: ADMIN_EMAILS=you@example.com,other@example.com
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+);
+
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -70,16 +76,18 @@ async function requireAuth(req, res, next) {
     req.email = decoded.email;
     req.displayName = decoded.name || decoded.email;
 
+    const isBootstrapAdmin = ADMIN_EMAILS.has((decoded.email || '').toLowerCase());
+
     // Load or create user doc
     const userRef = db.collection('wh_users').doc(decoded.uid);
     const snap = await userRef.get();
     if (!snap.exists) {
-      // New user — create with default role
+      // New user — create with default role (admin if bootstrap email)
       const userData = {
         uid: decoded.uid,
         email: decoded.email,
         displayName: decoded.name || decoded.email,
-        role: 'associate',
+        role: isBootstrapAdmin ? 'admin' : 'associate',
         teamId: null,
         hourlyCost: 0,
         createdAt: Timestamp.now(),
@@ -88,12 +96,19 @@ async function requireAuth(req, res, next) {
       await userRef.set(userData);
       req.user = userData;
     } else {
-      req.user = snap.data();
-      // Update lastSeen non-blocking
-      userRef.update({ lastSeen: Timestamp.now() }).catch(() => {});
+      const data = snap.data();
+      // If email is in ADMIN_EMAILS, always enforce admin role
+      if (isBootstrapAdmin && data.role !== 'admin') {
+        await userRef.update({ role: 'admin', lastSeen: Timestamp.now() });
+        data.role = 'admin';
+      } else {
+        userRef.update({ lastSeen: Timestamp.now() }).catch(() => {});
+      }
+      req.user = data;
     }
     next();
   } catch (err) {
+    console.error('requireAuth error:', err.message);
     return res.status(401).json({ error: 'Invalid auth token', detail: err.message });
   }
 }
@@ -238,8 +253,13 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
     if (!jobTypeId || !customerId) {
       return res.status(400).json({ error: 'jobTypeId and customerId are required' });
     }
-    if (!['bts', 'kit'].includes(jobTypeId)) {
-      return res.status(400).json({ error: 'Invalid jobTypeId' });
+    // Validate against built-in types and any custom types stored in Firestore
+    const jobTypesDoc = await db.collection('wh_config').doc('jobTypes').get();
+    const validJobTypeIds = jobTypesDoc.exists
+      ? (jobTypesDoc.data().list || []).map(jt => jt.id)
+      : Object.keys(JOB_TYPE_DEFS);
+    if (!validJobTypeIds.includes(jobTypeId)) {
+      return res.status(400).json({ error: `Invalid jobTypeId: ${jobTypeId}` });
     }
 
     const now = Timestamp.now();

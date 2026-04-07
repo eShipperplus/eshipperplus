@@ -327,7 +327,8 @@ if (state.offline) document.getElementById('offline-banner').classList.add('show
 // ── API ──
 async function getToken() {
   if (firebaseAuth.currentUser) {
-    return firebaseAuth.currentUser.getIdToken(false);
+    // Always force-refresh to avoid stale token 401s
+    return firebaseAuth.currentUser.getIdToken(true);
   }
   return state.token;
 }
@@ -343,8 +344,9 @@ async function apiFetch(url, options = {}) {
     },
   });
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }));
-    throw new Error(err.error || `HTTP ${resp.status}`);
+    const body = await resp.json().catch(() => ({ error: resp.statusText }));
+    const msg = body.detail ? `${body.error}: ${body.detail}` : (body.error || `HTTP ${resp.status}`);
+    throw new Error(msg);
   }
   return resp.json();
 }
