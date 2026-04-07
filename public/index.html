@@ -1656,6 +1656,23 @@ async function showEditJobModal(jobId) {
           ${managers.map(m=>`<option value="${m.uid}" ${job.assignedManagerId===m.uid?'selected':''}>${m.displayName}</option>`).join('')}
         </select>
       </div>` : ''}
+      <div class="form-group">
+        <label>Assign Associates</label>
+        <div style="border:1px solid var(--border);border-radius:7px;padding:10px;max-height:160px;overflow-y:auto;background:#fff">
+          ${(()=>{
+            const assocs=(state.data.users||[]).filter(u=>u.role==='associate'||u.role==='manager'||u.role==='admin');
+            if(!assocs.length) return '<p style="color:var(--text-light);font-size:12px">No users available yet</p>';
+            return assocs.map(u=>`
+              <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="ej-assoc-cb" value="${u.uid}" ${(job.assignedAssocId||[]).includes(u.uid)?'checked':''}/>
+                <div class="user-avatar" style="width:24px;height:24px;font-size:10px;flex-shrink:0">${(u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')}</div>
+                <span>${u.displayName}</span>
+                <span style="font-size:11px;color:var(--text-light);margin-left:auto">${u.role.replace('_',' ')}</span>
+              </label>`).join('');
+          })()}
+        </div>
+        <p style="font-size:11px;color:var(--text-light);margin-top:4px">Tick all associates who will work on this job</p>
+      </div>
       <div style="font-weight:600;font-size:13px;margin-bottom:8px">Job Fields</div>
       <form id="ej-fields-form">
         ${renderFieldInputs(fields, job.fields||{})}
@@ -1689,13 +1706,28 @@ async function submitEditJob(jobId) {
   const newCustomer = document.getElementById('ej-customer')?.value;
   if (newCustomer && newCustomer !== job.customerId) body.customerId = newCustomer;
 
+  // Collect selected associates
+  const selectedAssocIds = [...document.querySelectorAll('.ej-assoc-cb:checked')].map(cb => cb.value);
+
   try {
     await apiFetch(`/api/jobs/${jobId}`, { method: 'PUT', body: JSON.stringify(body) });
+
     // Assign manager if changed
     const newMgr = document.getElementById('ej-manager')?.value;
     if (newMgr !== undefined && newMgr !== job.assignedManagerId) {
       if (newMgr) await apiFetch(`/api/jobs/${jobId}/assign-manager`, { method: 'PUT', body: JSON.stringify({ managerId: newMgr }) }).catch(()=>{});
     }
+
+    // Assign associates (always send the full updated list)
+    const prevIds = job.assignedAssocId || [];
+    const changed = selectedAssocIds.length !== prevIds.length || selectedAssocIds.some(id => !prevIds.includes(id));
+    if (changed && selectedAssocIds.length > 0) {
+      await apiFetch(`/api/jobs/${jobId}/assign-associate`, {
+        method: 'PUT',
+        body: JSON.stringify({ associateIds: selectedAssocIds }),
+      });
+    }
+
     await loadData();
     document.querySelector('.modal-overlay')?.remove();
     renderView();
