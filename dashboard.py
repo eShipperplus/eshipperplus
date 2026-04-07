@@ -197,6 +197,7 @@ SELECT
     so.Code                          AS ShipmentOrderCode,
     COALESCE(c.FullName, c.DisplayName) AS ClientName,
     c.DisplayName                    AS ClientDisplayName,
+    sot.Name                         AS OrderType,
     pick.WaveNo,
     so.WarehouseId,
     pick.PickingCompletedAt,
@@ -253,6 +254,7 @@ SELECT
     so.Code                          AS ShipmentOrderCode,
     COALESCE(c.FullName, c.DisplayName) AS ClientName,
     c.DisplayName                    AS ClientDisplayName,
+    sot.Name                         AS OrderType,
     so.WarehouseId,
     wt.TaskCreatedAt                 AS AllocationDate,
     CASE wt.PickingStatusId
@@ -1008,7 +1010,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
     {opts}
   </select>
 </div>
-<div class="chart-box wide" style="margin-bottom:1rem;height:200px;position:relative">
+<div class="chart-box wide" style="margin-bottom:1rem;height:300px;position:relative">
   <canvas id="hourlyBar"></canvas>
 </div>
 <script>
