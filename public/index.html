@@ -490,9 +490,9 @@ async function loadData() {
     const cachedName = localStorage.getItem('wh_name');
     if (cachedRole && cachedUid) {
       state.user = { role: cachedRole, uid: cachedUid, displayName: cachedName || '' };
-      toast('Loaded from cache — some data may be outdated', 3000);
+      toast('Error: ' + e.message, 5000);
     } else {
-      toast('Failed to load data: ' + e.message, 3000);
+      toast('Failed to load data: ' + e.message, 5000);
     }
   }
 }
