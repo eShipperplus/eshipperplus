@@ -782,6 +782,18 @@ app.post('/api/users/:uid/reset-password-link', requireAuth, requireRole('admin'
   }
 });
 
+// Set a user's password directly (admin only)
+app.put('/api/users/:uid/password', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    await auth.updateUser(req.params.uid, { password });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/users/:uid', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     if (req.params.uid === req.uid) return res.status(400).json({ error: 'Cannot delete yourself' });

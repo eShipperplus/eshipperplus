@@ -1492,17 +1492,24 @@ function renderUsersTeams() {
 async function showInviteUserModal() {
   const teams = state.data.teams || [];
   showModal(`
-    <div class="modal-header"><h2>Invite User</h2>
+    <div class="modal-header"><h2>Add User</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
-      <p style="font-size:13px;color:var(--text-light);margin-bottom:16px">
-        Enter the user's details. When they sign in with this email, they'll automatically get the role and team you assign here.
-      </p>
       <div class="form-group"><label>Full Name</label>
         <input type="text" id="inv-name" placeholder="e.g. John Smith"/></div>
       <div class="form-group"><label>Email Address *</label>
         <input type="email" id="inv-email" placeholder="e.g. john@eshipperplus.com"/></div>
+      <div class="form-group"><label>Password *</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="password" id="inv-password" placeholder="Min. 6 characters" style="flex:1"/>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="
+            const i=document.getElementById('inv-password');
+            i.type=i.type==='password'?'text':'password';
+            this.textContent=i.type==='password'?'Show':'Hide'
+          ">Show</button>
+        </div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label>Role</label>
           <select id="inv-role">
@@ -1521,7 +1528,7 @@ async function showInviteUserModal() {
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-primary" onclick="submitInviteUser()">Send Invite</button>
+      <button class="btn btn-primary" onclick="submitInviteUser()">Create User</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
 }
@@ -1531,46 +1538,25 @@ async function submitInviteUser() {
   const displayName = document.getElementById('inv-name')?.value.trim();
   const role = document.getElementById('inv-role')?.value;
   const teamId = document.getElementById('inv-team')?.value || null;
+  const password = document.getElementById('inv-password')?.value || '';
   if (!email) { toast('Email is required'); return; }
+  if (!password || password.length < 6) { toast('Password must be at least 6 characters'); return; }
   try {
+    // Create account and set role/team
     const result = await apiFetch('/api/users/invite', {
       method: 'POST',
       body: JSON.stringify({ email, displayName, role, teamId }),
     });
+    // Set the password directly
+    const uid = result.uid;
+    if (uid) {
+      await apiFetch(`/api/users/${uid}/password`, { method: 'PUT', body: JSON.stringify({ password }) });
+    }
     document.querySelector('.modal-overlay')?.remove();
     await loadData();
     renderView();
-    if (result.resetLink) {
-      showPasswordLinkModal(email, result.resetLink, result.status === 'updated');
-    } else {
-      toast(result.status === 'updated'
-        ? `${email} updated — changes applied immediately`
-        : `Invite saved for ${email} — role & team applied when they sign in`, 4000);
-    }
+    toast(result.status === 'updated' ? `${email} updated` : `Account created for ${email}`, 3000);
   } catch(err) { toast('Error: ' + err.message, 3000); }
-}
-
-function showPasswordLinkModal(email, link, isUpdate) {
-  showModal(`
-    <div class="modal-header"><h2>${isUpdate ? 'User Updated' : 'User Invited'}</h2>
-      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
-    </div>
-    <div class="modal-body">
-      <p style="margin:0 0 12px">${isUpdate ? `${email} has been updated.` : `Account created for <strong>${email}</strong>.`} Share this password-set link with them:</p>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="text" id="pw-link-input" value="${link}" readonly
-          style="flex:1;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#f7f8fc"/>
-        <button class="btn btn-primary" onclick="
-          navigator.clipboard.writeText(document.getElementById('pw-link-input').value);
-          this.textContent='Copied!';
-          setTimeout(()=>this.textContent='Copy',2000)
-        ">Copy</button>
-      </div>
-      <p style="margin:12px 0 0;font-size:12px;color:var(--text-light)">This link lets them set their own password. It expires in 1 hour.</p>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
-    </div>`);
 }
 
 async function assignUserTeam(uid, teamId) {
@@ -2052,13 +2038,20 @@ function showEditUserModal(uid) {
         </select>
       </div>
     </div>
-    </div>
-    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center">
-      <button class="btn btn-ghost" id="eu-reset-btn" onclick="getPasswordResetLink('${uid}')">🔑 Get Password Reset Link</button>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" onclick="submitEditUser('${uid}')">Save Changes</button>
-        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <div class="form-group"><label>Set New Password <span style="font-weight:400;color:var(--text-light)">(leave blank to keep unchanged)</span></label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="password" id="eu-password" placeholder="Min. 6 characters" style="flex:1"/>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="
+            const i=document.getElementById('eu-password');
+            i.type=i.type==='password'?'text':'password';
+            this.textContent=i.type==='password'?'Show':'Hide'
+          ">Show</button>
+        </div>
       </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitEditUser('${uid}')">Save Changes</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
 }
 
@@ -2096,17 +2089,21 @@ async function submitEditUser(uid) {
   const role = document.getElementById('eu-role')?.value;
   const hourlyCost = parseFloat(document.getElementById('eu-cost')?.value) || 0;
   const teamId = document.getElementById('eu-team')?.value || null;
+  const password = document.getElementById('eu-password')?.value || '';
+  if (password && password.length < 6) { toast('Password must be at least 6 characters'); return; }
   try {
-    await Promise.all([
+    const calls = [
       apiFetch(`/api/users/${uid}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
       apiFetch(`/api/users/${uid}/profile`, { method: 'PUT', body: JSON.stringify({ displayName, hourlyCost, teamId }) }),
-    ]);
+    ];
+    if (password) calls.push(apiFetch(`/api/users/${uid}/password`, { method: 'PUT', body: JSON.stringify({ password }) }));
+    await Promise.all(calls);
     const u = state.data.users.find(x => x.uid === uid);
     if (u) { u.displayName = displayName; u.role = role; u.hourlyCost = hourlyCost; u.teamId = teamId; }
     await loadData();
     document.querySelector('.modal-overlay')?.remove();
     renderView();
-    toast('User updated');
+    toast(password ? 'User updated and password set' : 'User updated');
   } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
@@ -2286,7 +2283,7 @@ Object.assign(window, {
   uploadCustomersCSV, addCustomer, removeCustomer,
   uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
   showAddJobTypeModal, showEditJobTypeModal, addFieldRow, submitNewJobType, submitEditJobType,
-  showInviteUserModal, submitInviteUser, assignUserTeam, showPasswordLinkModal,
+  showInviteUserModal, submitInviteUser, assignUserTeam,
   showEditUserModal, submitEditUser, getPasswordResetLink,
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
