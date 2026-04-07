@@ -399,21 +399,46 @@ document.getElementById('signout-btn').addEventListener('click', async () => {
 
 onAuthStateChanged(firebaseAuth, async (fbUser) => {
   if (fbUser) {
-    // Force refresh token to avoid stale/invalid token issues
-    state.token = await fbUser.getIdToken(true);
+    // Force-refresh token so we get the latest custom claims (role embedded in token)
+    const tokenResult = await fbUser.getIdTokenResult(true);
+    state.token = tokenResult.token;
+
     document.getElementById('signin-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     const name = fbUser.displayName || fbUser.email || '?';
     const initials = name.split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
     document.getElementById('topbar-user').textContent = initials;
     document.getElementById('topbar-user').title = name;
-    await loadData();
+
+    // Seed role from token claims immediately — so nav renders correctly
+    // even if loadData() is slow or fails
+    const claimRole = tokenResult.claims?.role;
+    if (claimRole) {
+      if (!state.user) state.user = {};
+      state.user.role = claimRole;
+      state.user.uid = fbUser.uid;
+      state.user.displayName = name;
+      localStorage.setItem('wh_role', claimRole);
+      localStorage.setItem('wh_uid', fbUser.uid);
+      localStorage.setItem('wh_name', name);
+      renderNav(); // Show correct nav immediately from token claim
+    }
+
+    await loadData(); // Full data load — overwrites with server-confirmed role
     renderNav();
     renderView();
 
-    // Auto-refresh token every 50 minutes (tokens expire at 60 min)
+    // Auto-refresh token every 50 minutes so claims stay fresh
     setInterval(async () => {
-      state.token = await fbUser.getIdToken(true);
+      const tr = await fbUser.getIdTokenResult(true);
+      state.token = tr.token;
+      // If role changed server-side, update state
+      if (tr.claims?.role && tr.claims.role !== state.user?.role) {
+        if (state.user) state.user.role = tr.claims.role;
+        localStorage.setItem('wh_role', tr.claims.role);
+        renderNav();
+        renderView();
+      }
     }, 50 * 60 * 1000);
   } else {
     state.user = null;

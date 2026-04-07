@@ -58,11 +58,8 @@ const JOB_TYPE_DEFS = {
 };
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
-// ADMIN_EMAILS: comma-separated list of emails that always get admin role
-// Set in Cloud Run env vars: ADMIN_EMAILS=you@example.com,other@example.com
-const ADMIN_EMAILS = new Set(
-  (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-);
+// Role source of truth: Firebase Custom Claims (set server-side, embedded in token)
+// Firestore wh_users.role is kept in sync but the token claim wins on read.
 
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
@@ -76,34 +73,41 @@ async function requireAuth(req, res, next) {
     req.email = decoded.email;
     req.displayName = decoded.name || decoded.email;
 
-    const isBootstrapAdmin = ADMIN_EMAILS.has((decoded.email || '').toLowerCase());
-
-    // Load or create user doc
     const userRef = db.collection('wh_users').doc(decoded.uid);
     const snap = await userRef.get();
+
     if (!snap.exists) {
-      // New user — create with default role (admin if bootstrap email)
+      // Brand new user — default role is associate
+      // Check if custom claim already set (e.g. from a previous sign-up)
+      const claimRole = ROLES.includes(decoded.role) ? decoded.role : 'associate';
       const userData = {
         uid: decoded.uid,
         email: decoded.email,
         displayName: decoded.name || decoded.email,
-        role: isBootstrapAdmin ? 'admin' : 'associate',
+        role: claimRole,
         teamId: null,
         hourlyCost: 0,
         createdAt: Timestamp.now(),
         lastSeen: Timestamp.now(),
       };
       await userRef.set(userData);
+      // Stamp custom claim if not already set
+      if (!decoded.role) {
+        auth.setCustomUserClaims(decoded.uid, { role: claimRole }).catch(() => {});
+      }
       req.user = userData;
     } else {
       const data = snap.data();
-      // If email is in ADMIN_EMAILS, always enforce admin role
-      if (isBootstrapAdmin && data.role !== 'admin') {
-        await userRef.update({ role: 'admin', lastSeen: Timestamp.now() });
-        data.role = 'admin';
-      } else {
-        userRef.update({ lastSeen: Timestamp.now() }).catch(() => {});
+      userRef.update({ lastSeen: Timestamp.now() }).catch(() => {});
+
+      // If custom claim role differs from Firestore (e.g. role was changed by admin),
+      // the Firestore value is authoritative — re-stamp the claim so next token refresh picks it up
+      const firestoreRole = data.role || 'associate';
+      if (decoded.role !== firestoreRole) {
+        auth.setCustomUserClaims(decoded.uid, { role: firestoreRole }).catch(() => {});
       }
+      // Always use Firestore role (admin panel changes take effect immediately server-side)
+      data.role = firestoreRole;
       req.user = data;
     }
     next();
@@ -602,7 +606,11 @@ app.put('/api/users/:uid/role', requireAuth, requireRole('admin'), async (req, r
   try {
     const { role } = req.body;
     if (!ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
-    await db.collection('wh_users').doc(req.params.uid).update({ role });
+    // Write to both Firestore AND Firebase custom claims so role is in the token itself
+    await Promise.all([
+      db.collection('wh_users').doc(req.params.uid).update({ role }),
+      auth.setCustomUserClaims(req.params.uid, { role }),
+    ]);
     res.json({ uid: req.params.uid, role });
   } catch (err) {
     res.status(500).json({ error: err.message });
