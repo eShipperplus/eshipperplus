@@ -12,13 +12,31 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build container image
-        run: gcloud builds submit --config cloudbuild.yaml --project ${{ secrets.GCP_PROJECT_ID }} --async
+      - name: Build and push container image
+        run: |
+          gcloud builds submit \
+            --config cloudbuild.yaml \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --suppress-logs \
+            --async
 
-      - name: Wait for image to be ready
-        run: sleep 90
+      - name: Wait for Cloud Build to finish (poll every 20s, up to 10min)
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(gcloud builds list \
+              --project ${{ secrets.GCP_PROJECT_ID }} \
+              --limit=1 \
+              --format="value(status)" 2>/dev/null || echo "UNKNOWN")
+            echo "Build status: $STATUS"
+            if [ "$STATUS" = "SUCCESS" ]; then break; fi
+            if [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "CANCELLED" ]; then
+              echo "Build failed with status: $STATUS"
+              exit 1
+            fi
+            sleep 20
+          done
 
-      - name: Set Firebase service account env var on Cloud Run
+      - name: Inject Firebase env vars into Cloud Run
         run: |
           gcloud run services update warehouse-billing \
             --region northamerica-northeast2 \
