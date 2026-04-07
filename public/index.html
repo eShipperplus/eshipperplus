@@ -786,6 +786,7 @@ function renderAllJobs() {
 
 function renderJobRows(jobs) {
   if (!jobs.length) return '<tr><td colspan="10" class="empty-state">No jobs found</td></tr>';
+  const canAssign = state.user.role === 'admin' || state.user.role === 'manager';
   return jobs.map(j=>`<tr>
     <td>${j.customerId}</td>
     <td>${jobTypeName(j.jobTypeId)}</td>
@@ -796,11 +797,60 @@ function renderJobRows(jobs) {
     <td>${(j.assignedAssocNames||[]).join(', ')||j.assignedManagerName||'—'}</td>
     <td>${fmt(j.revenue)}</td>
     <td>${ratingBadge(j.rating)}</td>
-    <td style="white-space:nowrap">
+    <td style="white-space:nowrap;display:flex;gap:4px;flex-wrap:wrap">
       <button class="btn btn-primary btn-sm" onclick="openJobModal('${j.id}')">View</button>
-      ${state.user.role==='admin'?`<button class="btn btn-danger btn-sm" onclick="deleteJob('${j.id}')">Del</button>`:''}
+      ${canAssign && j.status !== 'completed' ? `<button class="btn btn-teal btn-sm" onclick="showQuickAssignModal('${j.id}')">Assign</button>` : ''}
+      ${state.user.role==='admin' ? `<button class="btn btn-danger btn-sm" onclick="deleteJob('${j.id}')">Del</button>` : ''}
     </td>
   </tr>`).join('');
+}
+
+// ── Quick Assign Modal ──
+function showQuickAssignModal(jobId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const associates = (state.data.users||[]).filter(u => u.role==='associate'||u.role==='manager'||u.role==='admin');
+  showModal(`
+    <div class="modal-header">
+      <h2>Assign Associates — ${job.customerId}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
+        Current status: ${statusBadge(job.status)}&nbsp;&nbsp;
+        After assigning: <span class="badge badge-assigned_associate">assigned associate</span>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:7px;padding:8px;max-height:220px;overflow-y:auto">
+        ${associates.length ? associates.map(u=>`
+          <label style="display:flex;align-items:center;gap:10px;padding:7px 4px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--grey)">
+            <input type="checkbox" class="qa-assoc-cb" value="${u.uid}" ${(job.assignedAssocId||[]).includes(u.uid)?'checked':''}/>
+            <div class="user-avatar" style="width:28px;height:28px;font-size:11px;flex-shrink:0">${(u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')}</div>
+            <div>
+              <div style="font-weight:600">${u.displayName}</div>
+              <div style="font-size:11px;color:var(--text-light)">${u.role.replace('_',' ')}</div>
+            </div>
+          </label>`).join('')
+        : '<p style="color:var(--text-light);font-size:13px;padding:8px">No users found. Invite users first.</p>'}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitQuickAssign('${jobId}')">Assign & Update Status</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function submitQuickAssign(jobId) {
+  const selected = [...document.querySelectorAll('.qa-assoc-cb:checked')].map(cb => cb.value);
+  if (!selected.length) { toast('Select at least one associate'); return; }
+  try {
+    await apiFetch(`/api/jobs/${jobId}/assign-associate`, {
+      method: 'PUT', body: JSON.stringify({ associateIds: selected }),
+    });
+    await loadData();
+    document.querySelector('.modal-overlay')?.remove();
+    renderView();
+    toast('Assigned — status updated to Assigned Associate');
+  } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
 // ── My Jobs ──
@@ -2160,6 +2210,7 @@ Object.assign(window, {
   showEditUserModal, submitEditUser,
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
+  showQuickAssignModal, submitQuickAssign,
 });
 </script>
 <script>
