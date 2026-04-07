@@ -229,13 +229,19 @@ app.get('/api/init', requireAuth, async (req, res) => {
         .get();
     } else {
       // Associate: own jobs + assigned jobs
+      // Note: array-contains without orderBy needs no composite index
       const [ownSnap, assignedSnap] = await Promise.all([
         db.collection('wh_jobs').where('createdBy', '==', uid).orderBy('createdAt', 'desc').limit(100).get(),
-        db.collection('wh_jobs').where('assignedAssocId', 'array-contains', uid).orderBy('createdAt', 'desc').limit(100).get(),
+        db.collection('wh_jobs').where('assignedAssocId', 'array-contains', uid).limit(200).get(),
       ]);
       const jobMap = new Map();
       [...ownSnap.docs, ...assignedSnap.docs].forEach((d) => jobMap.set(d.id, { id: d.id, ...d.data() }));
-      const jobs = Array.from(jobMap.values());
+      // Sort in memory — no composite index required
+      const jobs = Array.from(jobMap.values()).sort((a, b) => {
+        const ta = a.createdAt?._seconds || 0;
+        const tb = b.createdAt?._seconds || 0;
+        return tb - ta;
+      });
       return res.json({ user, jobs, customers, jobTypes, rateCards, targets });
     }
 
