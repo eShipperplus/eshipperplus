@@ -36,13 +36,34 @@ jobs:
           done
 
       - name: Deploy Firestore indexes
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
         run: |
-          gcloud firestore indexes composite create \
+          deploy_index() {
+            gcloud firestore indexes composite create "$@" \
+              --project "$FIREBASE_PROJECT_ID" --quiet 2>&1 \
+              | grep -v "already exists" || true
+          }
+          deploy_index \
+            --collection-group=wh_jobs \
+            --field-config=field-path=createdBy,order=ascending \
+            --field-config=field-path=createdAt,order=descending
+          deploy_index \
             --collection-group=wh_jobs \
             --field-config=field-path=assignedAssocId,array-config=contains \
-            --field-config=field-path=createdAt,order=descending \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --quiet 2>/dev/null || echo "Index already exists, skipping"
+            --field-config=field-path=createdAt,order=descending
+          deploy_index \
+            --collection-group=wh_jobs \
+            --field-config=field-path=status,order=ascending \
+            --field-config=field-path=createdAt,order=descending
+          deploy_index \
+            --collection-group=wh_jobs \
+            --field-config=field-path=assignedManagerId,order=ascending \
+            --field-config=field-path=createdAt,order=descending
+          deploy_index \
+            --collection-group=wh_audit \
+            --field-config=field-path=jobId,order=ascending \
+            --field-config=field-path=timestamp,order=descending
 
       - name: Write env vars file and update Cloud Run
         env:
