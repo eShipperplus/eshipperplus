@@ -573,6 +573,63 @@ app.put('/api/customers', requireAuth, requireRole('admin'), async (req, res) =>
   }
 });
 
+// Rename a customer and update all jobs that reference the old name
+app.put('/api/customers/rename', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { oldName, newName } = req.body;
+    if (!oldName || !newName) return res.status(400).json({ error: 'oldName and newName required' });
+    if (oldName === newName) return res.json({ updated: 0 });
+
+    // Update the customers list
+    const custRef = db.collection('wh_config').doc('customers');
+    const custSnap = await custRef.get();
+    const list = custSnap.exists ? (custSnap.data().list || []) : [];
+    const newList = list.map(c => c === oldName ? newName : c);
+    await custRef.set({ list: newList });
+
+    // Batch update all jobs referencing the old customer name
+    const jobsSnap = await db.collection('wh_jobs').where('customerId', '==', oldName).get();
+    const batch = db.batch();
+    jobsSnap.docs.forEach(d => batch.update(d.ref, { customerId: newName }));
+    await batch.commit();
+
+    res.json({ list: newList, updated: jobsSnap.size });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Edit a user's profile fields (name, hourlyCost, teamId) — role has its own endpoint
+app.put('/api/users/:uid/profile', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { displayName, hourlyCost, teamId } = req.body;
+    const update = { updatedAt: Timestamp.now() };
+    if (displayName !== undefined) update.displayName = displayName;
+    if (hourlyCost !== undefined) update.hourlyCost = Number(hourlyCost) || 0;
+    if (teamId !== undefined) update.teamId = teamId || null;
+    await db.collection('wh_users').doc(req.params.uid).update(update);
+    // If team changed, update team memberIds
+    if (teamId !== undefined) {
+      // Remove from all teams first
+      const teamsSnap = await db.collection('wh_teams').get();
+      const teamBatch = db.batch();
+      teamsSnap.docs.forEach(t => {
+        teamBatch.update(t.ref, { memberIds: FieldValue.arrayRemove(req.params.uid) });
+      });
+      await teamBatch.commit();
+      // Add to new team
+      if (teamId) {
+        await db.collection('wh_teams').doc(teamId).update({
+          memberIds: FieldValue.arrayUnion(req.params.uid),
+        });
+      }
+    }
+    res.json({ uid: req.params.uid, ...update });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put('/api/jobtypes', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { list } = req.body;
