@@ -912,7 +912,24 @@ function renderMyJobs() {
               <button class="btn btn-ghost btn-sm" onclick="openJobModal('${j.id}')">Details</button>
             </div>
           </div>
+          ${j.instructions?`<div style="font-size:12px;margin-top:6px;padding:6px 8px;background:#f0fff4;border-radius:5px;color:#276749">${j.instructions}</div>`:''}
           ${j.notes?`<div style="font-size:12px;margin-top:8px;color:var(--text-light)">${j.notes}</div>`:''}
+          ${(()=>{
+            const myLocs = (j.locations||[]).filter(l=>l.assignedAssocId===uid);
+            if (!myLocs.length) return '';
+            return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+              <div style="font-size:11px;font-weight:700;color:var(--text-light);letter-spacing:.05em;margin-bottom:6px">YOUR LOCATIONS</div>
+              ${myLocs.map(l=>`
+                <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--grey)">
+                  <div style="flex:1">
+                    <div style="font-size:13px;font-weight:600">${l.name}</div>
+                    ${l.instructions?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''}
+                    ${l.status==='done'?`<div style="font-size:11px;color:#276749">✓ Done${l.assocNotes?' — '+l.assocNotes:''}</div>`:''}
+                  </div>
+                  ${l.status!=='done'?`<button class="btn btn-teal btn-sm" onclick="openMarkLocationDoneModal('${j.id}','${l.id}')">Mark Done</button>`:'<span style="color:#276749;font-size:18px;line-height:1">✓</span>'}
+                </div>`).join('')}
+            </div>`;
+          })()}
         </div>
       `).join('')}
     </div>` : '<div class="card"><div class="empty-state">No active jobs 🎉</div></div>'}
@@ -1053,7 +1070,15 @@ function renderCreateJob() {
           </select>
         </div>
         <div class="form-group"><label>Due Date</label><input type="date" name="dueDate"/></div>
+        <div class="form-group"><label>Instructions <span style="font-weight:400;color:var(--text-light)">(shown to associates)</span></label><textarea name="instructions" rows="2" placeholder="What needs to be done, safety notes, etc."></textarea></div>
         <div class="form-group"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
+        <div class="form-group">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <label style="margin:0">Locations / Tasks <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="addLocationRow()">+ Add Location</button>
+          </div>
+          <div id="cj-locations-list"></div>
+        </div>
         <div class="toggle-row">
           <label class="toggle"><input type="checkbox" name="billable" checked/><span class="toggle-slider"></span></label>
           <span>Billable</span>
@@ -1683,10 +1708,30 @@ function showRatingResult(job) {
     <div class="modal-footer"><button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();renderView()">Done</button></div>`);
 }
 
+// ── Location row helpers ──
+function addLocationRow() {
+  const list = document.getElementById('cj-locations-list');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.className = 'loc-row';
+  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px';
+  div.innerHTML = `
+    <input type="text" class="loc-name" placeholder="Location name (e.g. Aisle 3 – Shelf B)" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+    <input type="text" class="loc-instr" placeholder="Instructions" style="flex:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+    <button type="button" onclick="this.closest('.loc-row').remove()" style="background:none;border:none;color:var(--text-light);font-size:18px;cursor:pointer;padding:0 4px">✕</button>`;
+  list.appendChild(div);
+}
+
 // ── Create job (office support) ──
 async function submitCreateJob(e) {
   e.preventDefault();
   const form = e.target;
+  const locationRows = [...document.querySelectorAll('#cj-locations-list .loc-row')];
+  const locations = locationRows.map((row, i) => ({
+    id: 'loc_' + Date.now() + '_' + i,
+    name: row.querySelector('.loc-name').value.trim(),
+    instructions: row.querySelector('.loc-instr').value.trim(),
+  })).filter(l => l.name);
   const body = {
     jobTypeId: form.jobTypeId.value,
     customerId: form.customerId.value,
@@ -1694,6 +1739,8 @@ async function submitCreateJob(e) {
     billable: form.billable.checked,
     dueDate: form.dueDate.value || null,
     notes: form.notes.value,
+    instructions: form.instructions.value,
+    locations,
   };
   if (!body.jobTypeId || !body.customerId) { toast('Select customer and job type'); return; }
   try {
@@ -1733,7 +1780,27 @@ async function openJobModal(jobId) {
       <div style="background:var(--grey);border-radius:7px;padding:10px;margin-top:6px;font-size:13px">
         ${fields.map(f=>`<div style="display:flex;justify-content:space-between;padding:3px 0"><span>${f.label}:</span><strong>${job.fields?.[f.id]??'—'}</strong></div>`).join('')}
       </div>
+      ${job.instructions?`<div class="form-group"><label style="color:#276749">Instructions</label><div style="padding:8px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:13px">${job.instructions}</div></div>`:''}
       ${job.notes?`<div class="form-group"><label>Job Notes</label><div style="padding:8px;background:#f7f8fc;border-radius:6px;font-size:13px">${job.notes}</div></div>`:''}
+      ${(job.locations||[]).length ? `
+      <div class="form-group">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label style="margin:0">Locations (${(job.locations||[]).filter(l=>l.status==='done').length}/${(job.locations||[]).length} done)</label>
+          ${state.user.role==='admin'||state.user.role==='manager' ? `<button class="btn btn-primary btn-sm" onclick="showAssignLocationsModal('${job.id}')">Assign Locations</button>` : ''}
+        </div>
+        ${(job.locations||[]).map(l=>`
+          <div style="display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;background:${l.status==='done'?'#f0fff4':'#fff'}">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:13px">${l.name}</div>
+              ${l.instructions?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''}
+              <div style="font-size:11px;margin-top:3px">${l.assignedAssocName?`Assigned: <strong>${l.assignedAssocName}</strong>`:'<span style="color:var(--text-light)">Unassigned</span>'}</div>
+              ${l.status==='done'&&l.assocNotes?`<div style="font-size:11px;color:#276749;margin-top:2px">Notes: ${l.assocNotes}</div>`:''}
+            </div>
+            <div style="flex-shrink:0">
+              ${l.status==='done'?'<span style="color:#276749;font-size:18px">✓</span>':'<span style="color:var(--text-light);font-size:12px">Pending</span>'}
+            </div>
+          </div>`).join('')}
+      </div>` : ''}
       ${job.associateNotes?`<div class="form-group"><label style="color:#553c9a">Associate Notes</label><div style="padding:8px;background:#faf5ff;border:1px solid #e9d8fd;border-radius:6px;font-size:13px">${job.associateNotes}</div></div>`:''}
       ${job.managerNotes?`<div class="form-group"><label style="color:#2b6cb0">Manager Notes</label><div style="padding:8px;background:#ebf8ff;border:1px solid #bee3f8;border-radius:6px;font-size:13px">${job.managerNotes}</div></div>`:''}
     </div>
@@ -2024,6 +2091,93 @@ async function submitReviewComplete(jobId) {
   } catch (err) {
     toast('Error: ' + err.message, 3000);
     btn.disabled = false; btn.textContent = 'Approve & Complete';
+  }
+}
+
+// ── Assign Locations Modal (Manager) ──
+function showAssignLocationsModal(jobId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const associates = (state.data.users||[]).filter(u => u.role==='associate'||u.role==='manager'||u.role==='admin');
+  const locs = job.locations || [];
+  if (!locs.length) { toast('This job has no locations to assign'); return; }
+  showModal(`
+    <div class="modal-header"><h2>Assign Locations — ${job.customerId}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-light);margin-bottom:14px">Assign each location to an associate. They will see it on their mobile.</p>
+      ${locs.map((l,i)=>`
+        <div style="border:1px solid var(--border);border-radius:7px;padding:12px;margin-bottom:10px;background:${l.status==='done'?'#f0fff4':'#fff'}">
+          <div style="font-weight:700;margin-bottom:6px">${l.name}${l.status==='done'?' <span style="color:#276749;font-size:12px">✓ Done</span>':''}</div>
+          ${l.instructions?`<div style="font-size:12px;color:var(--text-light);margin-bottom:8px">${l.instructions}</div>`:''}
+          <select class="loc-assign-select" data-loc-id="${l.id}" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" ${l.status==='done'?'disabled':''}>
+            <option value="">— Unassigned —</option>
+            ${associates.map(u=>`<option value="${u.uid}" ${l.assignedAssocId===u.uid?'selected':''}>${u.displayName} (${u.role.replace('_',' ')})</option>`).join('')}
+          </select>
+        </div>`).join('')}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitAssignLocations('${jobId}')">Save Assignments</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function submitAssignLocations(jobId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const selects = [...document.querySelectorAll('.loc-assign-select')];
+  const locations = (job.locations||[]).map(l => {
+    const sel = selects.find(s => s.dataset.locId === l.id);
+    const assignedAssocId = sel ? (sel.value || null) : l.assignedAssocId;
+    return { ...l, assignedAssocId };
+  });
+  try {
+    await apiFetch(`/api/jobs/${jobId}/locations`, { method: 'PUT', body: JSON.stringify({ locations }) });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadData();
+    renderView();
+    toast('Locations assigned');
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
+// ── Mark Location Done Modal (Associate) ──
+function openMarkLocationDoneModal(jobId, locId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  const loc = (job?.locations||[]).find(l => l.id === locId);
+  if (!loc) return;
+  showModal(`
+    <div class="modal-header"><h2>Mark Done — ${loc.name}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      ${loc.instructions?`<div style="padding:10px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:13px;margin-bottom:14px;color:#276749">${loc.instructions}</div>`:''}
+      <div class="form-group"><label>Notes <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
+        <textarea id="loc-done-notes" rows="3" placeholder="Any observations, issues found, etc." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-teal" id="loc-done-btn" onclick="submitMarkLocationDone('${jobId}','${locId}')">Mark as Done</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function submitMarkLocationDone(jobId, locId) {
+  const assocNotes = document.getElementById('loc-done-notes')?.value || '';
+  const btn = document.getElementById('loc-done-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const result = await apiFetch(`/api/jobs/${jobId}/locations/${locId}/done`, {
+      method: 'PUT', body: JSON.stringify({ assocNotes }),
+    });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadData();
+    renderView();
+    if (result.allDone) toast('All locations done — job submitted for manager review');
+    else toast('Location marked done');
+  } catch(err) {
+    toast('Error: ' + err.message, 3000);
+    btn.disabled = false; btn.textContent = 'Mark as Done';
   }
 }
 
@@ -2432,6 +2586,7 @@ async function exportCSV() {
 Object.assign(window, {
   openJobModal, openCompleteModal, submitComplete, assignAssociate,
   openSubmitReviewModal, submitForReview, openReviewCompleteModal, submitReviewComplete,
+  addLocationRow, showAssignLocationsModal, submitAssignLocations, openMarkLocationDoneModal, submitMarkLocationDone,
   deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
   updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,

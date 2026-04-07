@@ -269,7 +269,7 @@ app.get('/api/init', requireAuth, async (req, res) => {
 app.post('/api/jobs', requireAuth, async (req, res) => {
   try {
     const { user, uid } = req;
-    const { jobTypeId, customerId, fields, billable, dueDate, notes, assignedManagerId } = req.body;
+    const { jobTypeId, customerId, fields, billable, dueDate, notes, assignedManagerId, instructions, locations } = req.body;
 
     if (!jobTypeId || !customerId) {
       return res.status(400).json({ error: 'jobTypeId and customerId are required' });
@@ -292,6 +292,17 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
       fields: fields || {},
       dueDate: dueDate || null,
       notes: notes || '',
+      instructions: instructions || '',
+      locations: (locations || []).map((l, i) => ({
+        id: l.id || ('loc_' + Date.now() + '_' + i),
+        name: l.name || '',
+        instructions: l.instructions || '',
+        assignedAssocId: null,
+        assignedAssocName: '',
+        status: 'pending',
+        assocNotes: '',
+        completedAt: null,
+      })),
       createdBy: uid,
       createdByName: user.displayName,
       createdByEmail: user.email,
@@ -432,6 +443,85 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT assign-associate error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manager saves location assignments
+app.put('/api/jobs/:id/locations', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const { locations } = req.body;
+    if (!Array.isArray(locations)) return res.status(400).json({ error: 'locations array required' });
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    const job = jobSnap.data();
+    // Merge assignments into existing locations (preserve status/notes)
+    const existing = job.locations || [];
+    const merged = locations.map(l => {
+      const prev = existing.find(e => e.id === l.id) || {};
+      return { ...prev, ...l };
+    });
+    // Build full assignedAssocId list from locations
+    const assocIds = [...new Set(merged.map(l => l.assignedAssocId).filter(Boolean))];
+    const assocSnaps = await Promise.all(assocIds.map(id => db.collection('wh_users').doc(id).get()));
+    const assocNames = {};
+    assocSnaps.forEach(s => { if (s.exists) assocNames[s.id] = s.data().displayName; });
+    const mergedWithNames = merged.map(l => ({
+      ...l,
+      assignedAssocName: l.assignedAssocId ? (assocNames[l.assignedAssocId] || l.assignedAssocName || '') : '',
+    }));
+    const now = Timestamp.now();
+    await db.collection('wh_jobs').doc(req.params.id).update({
+      locations: mergedWithNames,
+      assignedAssocId: assocIds,
+      assignedAssocNames: assocIds.map(id => assocNames[id] || ''),
+      status: assocIds.length > 0 && job.status === 'assigned_manager' ? 'assigned_associate' : job.status,
+      updatedBy: uid,
+      updatedByName: user.displayName,
+      updatedAt: now,
+    });
+    res.json({ locations: mergedWithNames });
+  } catch (err) {
+    console.error('PUT locations error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Associate marks a location as done
+app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const { assocNotes } = req.body;
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    const job = jobSnap.data();
+    const locIndex = (job.locations || []).findIndex(l => l.id === req.params.locId);
+    if (locIndex === -1) return res.status(404).json({ error: 'Location not found' });
+    const loc = job.locations[locIndex];
+    if (loc.assignedAssocId !== uid) return res.status(403).json({ error: 'Not assigned to this location' });
+    const now = Timestamp.now();
+    const updatedLocations = job.locations.map((l, i) =>
+      i === locIndex ? { ...l, status: 'done', assocNotes: assocNotes || '', completedAt: now } : l
+    );
+    const allDone = updatedLocations.every(l => l.status === 'done');
+    const update = {
+      locations: updatedLocations,
+      updatedBy: uid,
+      updatedByName: user.displayName,
+      updatedAt: now,
+    };
+    if (allDone) {
+      update.status = 'pending_review';
+      update.submittedBy = uid;
+      update.submittedByName = user.displayName;
+      update.submittedAt = now;
+    }
+    await db.collection('wh_jobs').doc(req.params.id).update(update);
+    await writeAudit(req.params.id, allDone ? 'pending_review' : 'location_done', uid, user.displayName, job, update);
+    res.json({ id: req.params.id, allDone, locations: updatedLocations });
+  } catch (err) {
+    console.error('PUT location done error:', err);
     res.status(500).json({ error: err.message });
   }
 });
