@@ -1039,6 +1039,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
     }}
   }};
 
+  if (window.ChartDataLabels) {{ Chart.register(ChartDataLabels); }}
   var v0 = agg('__all__');
   var ctx = document.getElementById('hourlyBar').getContext('2d');
   hourlyChart = new Chart(ctx, {{
@@ -1054,7 +1055,17 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       responsive: true,
       maintainAspectRatio: false,
       interaction: {{mode:'index', intersect:false}},
-      plugins: {{legend: {{labels: {{color:'#94a3b8', boxWidth:12, font:{{size:11}}}}}}}},
+      plugins: {{
+        legend: {{labels: {{color:'#94a3b8', boxWidth:12, font:{{size:11}}}}}},
+        datalabels: {{
+          anchor: 'end',
+          align: 'end',
+          color: '#334155',
+          font: {{size:9, weight:'600'}},
+          formatter: function(value) {{ return value > 0 ? value : ''; }},
+          offset: 2
+        }}
+      }},
       scales: {{
         x: {{ticks:{{color:'#64748b',font:{{size:9}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}}},
         y: {{ticks:{{color:'#64748b',font:{{size:10}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}, beginAtZero:true}}
@@ -1355,6 +1366,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{background:#f1f5f9;color:#1e293b;font-family:"Segoe UI",system-ui,sans-serif;font-size:.875rem}}
@@ -1625,6 +1637,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(el){{el.add
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <style>
   body {{ background:#0f172a; color:#e2e8f0; font-family:'Segoe UI',sans-serif; font-size:0.88rem; }}
   .topbar {{ background:#1e293b; border-bottom:1px solid #334155; padding:0.6rem 1.2rem;
