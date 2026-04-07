@@ -923,8 +923,8 @@ function renderMyJobs() {
                 <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--grey)">
                   <div style="flex:1">
                     <div style="font-size:13px;font-weight:600">${l.name}</div>
-                    ${l.instructions?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''}
-                    ${l.status==='done'?`<div style="font-size:11px;color:#276749">✓ Done${l.assocNotes?' — '+l.assocNotes:''}</div>`:''}
+                    ${(()=>{const ref=Object.entries(l.referenceData||{}).filter(([,v])=>v);return ref.length?`<div style="font-size:11px;color:var(--text-light);margin-top:2px">${ref.map(([k,v])=>`${k}: ${v}`).join(' · ')}</div>`:l.instructions?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''})()}
+                    ${l.status==='done'?`<div style="font-size:11px;color:#276749;margin-top:2px">✓ Done${l.assocNotes?' — '+l.assocNotes:''}</div>`:''}
                   </div>
                   ${l.status!=='done'?`<button class="btn btn-teal btn-sm" onclick="openMarkLocationDoneModal('${j.id}','${l.id}')">Mark Done</button>`:'<span style="color:#276749;font-size:18px;line-height:1">✓</span>'}
                 </div>`).join('')}
@@ -1075,8 +1075,13 @@ function renderCreateJob() {
         <div class="form-group">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <label style="margin:0">Locations / Tasks <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="addLocationRow()">+ Add Location</button>
+            <div style="display:flex;gap:6px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('loc-csv-input').click()">⬆ Upload CSV</button>
+              <input type="file" id="loc-csv-input" accept=".csv,.xlsx" style="display:none" onchange="handleLocationCSV(this)"/>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="addLocationRow()">+ Add Row</button>
+            </div>
           </div>
+          <div id="cj-loc-csv-info" style="display:none;font-size:12px;color:var(--text-light);margin-bottom:8px"></div>
           <div id="cj-locations-list"></div>
         </div>
         <div class="toggle-row">
@@ -1717,9 +1722,44 @@ function addLocationRow() {
   div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px';
   div.innerHTML = `
     <input type="text" class="loc-name" placeholder="Location name (e.g. Aisle 3 – Shelf B)" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
-    <input type="text" class="loc-instr" placeholder="Instructions" style="flex:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+    <input type="text" class="loc-instr" placeholder="Instructions (optional)" style="flex:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
     <button type="button" onclick="this.closest('.loc-row').remove()" style="background:none;border:none;color:var(--text-light);font-size:18px;cursor:pointer;padding:0 4px">✕</button>`;
   list.appendChild(div);
+}
+
+function handleLocationCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const rows = parseCSV(e.target.result);
+      if (!rows.length) { toast('CSV is empty or has no data rows'); return; }
+      const headers = Object.keys(rows[0]);
+      // Use "Location" column as name if it exists, otherwise first column
+      const nameCol = headers.find(h => /^location$/i.test(h.trim())) || headers[0];
+      const list = document.getElementById('cj-locations-list');
+      list.innerHTML = '';
+      rows.forEach((row, i) => {
+        const name = (row[nameCol] || '').trim() || `Row ${i + 1}`;
+        const referenceData = {};
+        headers.forEach(h => { referenceData[h] = row[h] || ''; });
+        const refSummary = headers.slice(0, 4).map(h => `<span style="color:var(--text-light)">${h}:</span> ${row[h]||'—'}`).join(' &nbsp;·&nbsp; ');
+        const div = document.createElement('div');
+        div.className = 'loc-row';
+        div.dataset.locJson = JSON.stringify({ name, referenceData });
+        div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:5px;background:#f7f8fc;font-size:12px';
+        div.innerHTML = `<div style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${refSummary}</div>
+          <button type="button" onclick="this.closest('.loc-row').remove()" style="background:none;border:none;color:var(--text-light);font-size:16px;cursor:pointer;flex-shrink:0">✕</button>`;
+        list.appendChild(div);
+      });
+      const info = document.getElementById('cj-loc-csv-info');
+      if (info) { info.textContent = `${rows.length} locations loaded from CSV (${headers.join(', ')})`; info.style.display = 'block'; }
+      toast(`${rows.length} locations loaded`);
+    } catch(err) { toast('CSV parse error: ' + err.message); }
+  };
+  reader.readAsText(file);
+  input.value = '';
 }
 
 // ── Create job (office support) ──
@@ -1727,11 +1767,15 @@ async function submitCreateJob(e) {
   e.preventDefault();
   const form = e.target;
   const locationRows = [...document.querySelectorAll('#cj-locations-list .loc-row')];
-  const locations = locationRows.map((row, i) => ({
-    id: 'loc_' + Date.now() + '_' + i,
-    name: row.querySelector('.loc-name').value.trim(),
-    instructions: row.querySelector('.loc-instr').value.trim(),
-  })).filter(l => l.name);
+  const locations = locationRows.map((row, i) => {
+    if (row.dataset.locJson) {
+      const d = JSON.parse(row.dataset.locJson);
+      return { id: 'loc_' + Date.now() + '_' + i, name: d.name, instructions: d.instructions || '', referenceData: d.referenceData || {} };
+    }
+    const name = row.querySelector('.loc-name')?.value.trim() || '';
+    const instructions = row.querySelector('.loc-instr')?.value.trim() || '';
+    return { id: 'loc_' + Date.now() + '_' + i, name, instructions, referenceData: {} };
+  }).filter(l => l.name);
   const body = {
     jobTypeId: form.jobTypeId.value,
     customerId: form.customerId.value,
@@ -1788,18 +1832,19 @@ async function openJobModal(jobId) {
           <label style="margin:0">Locations (${(job.locations||[]).filter(l=>l.status==='done').length}/${(job.locations||[]).length} done)</label>
           ${state.user.role==='admin'||state.user.role==='manager' ? `<button class="btn btn-primary btn-sm" onclick="showAssignLocationsModal('${job.id}')">Assign Locations</button>` : ''}
         </div>
-        ${(job.locations||[]).map(l=>`
-          <div style="display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;background:${l.status==='done'?'#f0fff4':'#fff'}">
-            <div style="flex:1">
+        ${(job.locations||[]).map(l=>{
+          const refEntries = Object.entries(l.referenceData||{}).filter(([,v])=>v);
+          const capEntries = Object.entries(l.capturedData||{}).filter(([,v])=>v!==''&&v!=null);
+          return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;background:${l.status==='done'?'#f0fff4':'#fff'}">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
               <div style="font-weight:600;font-size:13px">${l.name}</div>
-              ${l.instructions?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''}
-              <div style="font-size:11px;margin-top:3px">${l.assignedAssocName?`Assigned: <strong>${l.assignedAssocName}</strong>`:'<span style="color:var(--text-light)">Unassigned</span>'}</div>
-              ${l.status==='done'&&l.assocNotes?`<div style="font-size:11px;color:#276749;margin-top:2px">Notes: ${l.assocNotes}</div>`:''}
+              ${l.status==='done'?'<span style="color:#276749;font-size:18px">✓</span>':'<span style="font-size:11px;color:var(--text-light)">Pending</span>'}
             </div>
-            <div style="flex-shrink:0">
-              ${l.status==='done'?'<span style="color:#276749;font-size:18px">✓</span>':'<span style="color:var(--text-light);font-size:12px">Pending</span>'}
-            </div>
-          </div>`).join('')}
+            ${refEntries.length?`<div style="font-size:12px;color:var(--text-light);margin-bottom:4px">${refEntries.map(([k,v])=>`<span style="margin-right:10px"><strong>${k}:</strong> ${v}</span>`).join('')}</div>`:''}
+            <div style="font-size:11px;color:var(--text-light)">${l.assignedAssocName?`Assigned: <strong style="color:var(--text)">${l.assignedAssocName}</strong>`:'Unassigned'}</div>
+            ${capEntries.length?`<div style="margin-top:6px;padding:6px;background:#ebf8ff;border-radius:5px;font-size:12px">${capEntries.map(([k,v])=>`<span style="margin-right:10px"><strong>${k.replace(/_/g,' ')}:</strong> ${v}</span>`).join('')}${l.assocNotes?` <span style="color:var(--text-light)">— ${l.assocNotes}</span>`:''}</div>`:(l.assocNotes?`<div style="font-size:11px;color:#276749;margin-top:3px">${l.assocNotes}</div>`:'')}
+          </div>`;
+        }).join('')}
       </div>` : ''}
       ${job.associateNotes?`<div class="form-group"><label style="color:#553c9a">Associate Notes</label><div style="padding:8px;background:#faf5ff;border:1px solid #e9d8fd;border-radius:6px;font-size:13px">${job.associateNotes}</div></div>`:''}
       ${job.managerNotes?`<div class="form-group"><label style="color:#2b6cb0">Manager Notes</label><div style="padding:8px;background:#ebf8ff;border:1px solid #bee3f8;border-radius:6px;font-size:13px">${job.managerNotes}</div></div>`:''}
@@ -2146,14 +2191,26 @@ function openMarkLocationDoneModal(jobId, locId) {
   const job = state.data.jobs.find(j => j.id === jobId);
   const loc = (job?.locations||[]).find(l => l.id === locId);
   if (!loc) return;
+  const captureFields = getJobFields(job.jobTypeId);
+  const refEntries = Object.entries(loc.referenceData || {}).filter(([,v]) => v);
+  const refHtml = refEntries.length ? `
+    <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;padding:10px;margin-bottom:14px">
+      ${refEntries.map(([k,v])=>`<div style="display:flex;gap:12px;font-size:13px;padding:2px 0">
+        <span style="color:#276749;min-width:110px;font-weight:600">${k}</span><span>${v}</span>
+      </div>`).join('')}
+    </div>` : (loc.instructions ? `<div style="padding:10px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:13px;margin-bottom:14px;color:#276749">${loc.instructions}</div>` : '');
+  const fieldsHtml = captureFields.length ? `
+    <div style="font-size:13px;font-weight:600;margin:12px 0 8px">Fill in</div>
+    <form id="loc-capture-form">${renderFieldInputs(captureFields, loc.capturedData||{})}</form>` : '';
   showModal(`
-    <div class="modal-header"><h2>Mark Done — ${loc.name}</h2>
+    <div class="modal-header"><h2>${loc.name}</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
-      ${loc.instructions?`<div style="padding:10px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:13px;margin-bottom:14px;color:#276749">${loc.instructions}</div>`:''}
-      <div class="form-group"><label>Notes <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
-        <textarea id="loc-done-notes" rows="3" placeholder="Any observations, issues found, etc." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical"></textarea>
+      ${refHtml}
+      ${fieldsHtml}
+      <div class="form-group" style="margin-top:12px"><label>Notes <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
+        <textarea id="loc-done-notes" rows="2" placeholder="Any observations, issues found, etc." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical"></textarea>
       </div>
     </div>
     <div class="modal-footer">
@@ -2163,12 +2220,17 @@ function openMarkLocationDoneModal(jobId, locId) {
 }
 
 async function submitMarkLocationDone(jobId, locId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  const loc = (job?.locations||[]).find(l => l.id === locId);
+  const captureFields = getJobFields(job?.jobTypeId);
+  const captureForm = document.getElementById('loc-capture-form');
+  const capturedData = captureForm ? collectFields(captureForm, captureFields) : {};
   const assocNotes = document.getElementById('loc-done-notes')?.value || '';
   const btn = document.getElementById('loc-done-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
   try {
     const result = await apiFetch(`/api/jobs/${jobId}/locations/${locId}/done`, {
-      method: 'PUT', body: JSON.stringify({ assocNotes }),
+      method: 'PUT', body: JSON.stringify({ assocNotes, capturedData }),
     });
     document.querySelector('.modal-overlay')?.remove();
     await loadData();

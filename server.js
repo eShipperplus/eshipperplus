@@ -492,7 +492,7 @@ app.put('/api/jobs/:id/locations', requireAuth, requireRole('manager', 'admin'),
 app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => {
   try {
     const { user, uid } = req;
-    const { assocNotes } = req.body;
+    const { assocNotes, capturedData } = req.body;
     const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
     if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
     const job = jobSnap.data();
@@ -502,7 +502,7 @@ app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => 
     if (loc.assignedAssocId !== uid) return res.status(403).json({ error: 'Not assigned to this location' });
     const now = Timestamp.now();
     const updatedLocations = job.locations.map((l, i) =>
-      i === locIndex ? { ...l, status: 'done', assocNotes: assocNotes || '', completedAt: now } : l
+      i === locIndex ? { ...l, status: 'done', assocNotes: assocNotes || '', capturedData: capturedData || {}, completedAt: now } : l
     );
     const allDone = updatedLocations.every(l => l.status === 'done');
     const update = {
