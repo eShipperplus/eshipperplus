@@ -1008,8 +1008,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
     {opts}
   </select>
 </div>
-<div class="chart-box wide" style="margin-bottom:1.5rem">
-  <canvas id="hourlyBar" height="160"></canvas>
+<div class="chart-box wide" style="margin-bottom:1rem;height:200px;position:relative">
+  <canvas id="hourlyBar"></canvas>
 </div>
 <script>
 (function(){{
@@ -1050,11 +1050,12 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
     }},
     options: {{
       responsive: true,
+      maintainAspectRatio: false,
       interaction: {{mode:'index', intersect:false}},
-      plugins: {{legend: {{labels: {{color:'#94a3b8'}}}}}},
+      plugins: {{legend: {{labels: {{color:'#94a3b8', boxWidth:12, font:{{size:11}}}}}}}},
       scales: {{
-        x: {{ticks:{{color:'#64748b',font:{{size:10}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}}},
-        y: {{ticks:{{color:'#64748b'}}, grid:{{color:'rgba(0,0,0,0.06)'}}, beginAtZero:true}}
+        x: {{ticks:{{color:'#64748b',font:{{size:9}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}}},
+        y: {{ticks:{{color:'#64748b',font:{{size:10}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}, beginAtZero:true}}
       }}
     }}
   }});
