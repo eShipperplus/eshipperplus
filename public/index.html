@@ -2164,29 +2164,98 @@ async function submitReviewComplete(jobId) {
 function showAssignLocationsModal(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
   if (!job) return;
-  const associates = (state.data.users||[]).filter(u => u.role==='associate'||u.role==='manager'||u.role==='admin');
+  const associates = (state.data.users||[]).filter(u => ['associate','manager','admin'].includes(u.role));
   const locs = job.locations || [];
   if (!locs.length) { toast('This job has no locations to assign'); return; }
+
+  const makeOpts = (selUid) => `<option value="">— Unassigned —</option>` +
+    associates.map(u => `<option value="${u.uid}"${u.uid === selUid ? ' selected' : ''}>${u.displayName}</option>`).join('');
+
   showModal(`
     <div class="modal-header"><h2>Assign Locations — ${job.customerId}</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
-      <p style="font-size:13px;color:var(--text-light);margin-bottom:14px">Assign each location to an associate. They will see it on their mobile.</p>
-      ${locs.map((l,i)=>`
-        <div style="border:1px solid var(--border);border-radius:7px;padding:12px;margin-bottom:10px;background:${l.status==='done'?'#f0fff4':'#fff'}">
-          <div style="font-weight:700;margin-bottom:6px">${l.name}${l.status==='done'?' <span style="color:#276749;font-size:12px">✓ Done</span>':''}</div>
-          ${l.instructions?`<div style="font-size:12px;color:var(--text-light);margin-bottom:8px">${l.instructions}</div>`:''}
-          <select class="loc-assign-select" data-loc-id="${l.id}" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" ${l.status==='done'?'disabled':''}>
-            <option value="">— Unassigned —</option>
-            ${associates.map(u=>`<option value="${u.uid}" ${l.assignedAssocId===u.uid?'selected':''}>${u.displayName} (${u.role.replace('_',' ')})</option>`).join('')}
-          </select>
-        </div>`).join('')}
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <input id="loc-search" type="text" placeholder="Search locations…" oninput="filterAssignLocs()"
+          style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:7px;font-size:13px"/>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap;cursor:pointer;font-weight:600">
+          <input type="checkbox" id="loc-select-all" onchange="toggleAssignSelectAll(this.checked)"/> Select All
+        </label>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:10px;background:#f0f4ff;border-radius:7px;margin-bottom:14px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600;white-space:nowrap">Bulk assign selected:</span>
+        <select id="bulk-assign-user" style="flex:1;min-width:150px;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+          ${makeOpts('')}
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="bulkAssignApply()" style="white-space:nowrap">Apply</button>
+      </div>
+      <div id="loc-assign-list">
+        ${locs.map(l => {
+          const refEntries = Object.entries(l.referenceData||{}).filter(([,v])=>v);
+          const refHtml = refEntries.map(([k,v])=>`<span style="margin-right:8px"><strong>${k}:</strong> ${v}</span>`).join('');
+          return `<div class="loc-assign-row" data-name="${(l.name||'').toLowerCase()}" data-loc-id="${l.id}"
+            style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:7px;padding:10px;margin-bottom:8px;background:${l.status==='done'?'#f0fff4':'#fff'}">
+            <input type="checkbox" class="loc-check" style="width:16px;height:16px;flex-shrink:0" ${l.status==='done'?'disabled':''} onchange="updateSelectAllState()"/>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:700;font-size:13px">${l.name}${l.status==='done'?' <span style="color:#276749;font-size:11px">✓ Done</span>':''}</div>
+              ${refHtml?`<div style="font-size:11px;color:var(--text-light);margin-top:2px">${refHtml}</div>`:''}
+              ${l.instructions&&!refHtml?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''}
+            </div>
+            <select class="loc-assign-select" data-loc-id="${l.id}"
+              style="width:170px;flex-shrink:0;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:13px" ${l.status==='done'?'disabled':''}>
+              ${makeOpts(l.assignedAssocId||'')}
+            </select>
+          </div>`;
+        }).join('')}
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="submitAssignLocations('${jobId}')">Save Assignments</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
+}
+
+function filterAssignLocs() {
+  const q = (document.getElementById('loc-search')?.value || '').toLowerCase().trim();
+  document.querySelectorAll('.loc-assign-row').forEach(row => {
+    row.style.display = (!q || (row.dataset.name || '').includes(q)) ? '' : 'none';
+  });
+  updateSelectAllState();
+}
+
+function toggleAssignSelectAll(checked) {
+  document.querySelectorAll('.loc-assign-row').forEach(row => {
+    if (row.style.display === 'none') return;
+    const cb = row.querySelector('.loc-check');
+    if (cb && !cb.disabled) cb.checked = checked;
+  });
+}
+
+function updateSelectAllState() {
+  const checks = [...document.querySelectorAll('.loc-assign-row')]
+    .filter(r => r.style.display !== 'none')
+    .map(r => r.querySelector('.loc-check'))
+    .filter(c => c && !c.disabled);
+  const sa = document.getElementById('loc-select-all');
+  if (!sa) return;
+  sa.checked = checks.length > 0 && checks.every(c => c.checked);
+  sa.indeterminate = !sa.checked && checks.some(c => c.checked);
+}
+
+function bulkAssignApply() {
+  const sel = document.getElementById('bulk-assign-user');
+  const uid = sel?.value || '';
+  const name = uid ? (sel.selectedOptions[0]?.text || '') : 'Unassigned';
+  let count = 0;
+  document.querySelectorAll('.loc-assign-row').forEach(row => {
+    const cb = row.querySelector('.loc-check');
+    if (!cb || !cb.checked || cb.disabled) return;
+    const s = row.querySelector('.loc-assign-select');
+    if (s) { s.value = uid; count++; }
+  });
+  if (!count) { toast('Select at least one location first'); return; }
+  toast(`${count} location${count > 1 ? 's' : ''} assigned to ${name}`);
 }
 
 async function submitAssignLocations(jobId) {
@@ -2746,6 +2815,7 @@ Object.assign(window, {
   openJobModal, openCompleteModal, submitComplete, assignAssociate,
   openSubmitReviewModal, submitForReview, openReviewCompleteModal, submitReviewComplete,
   addLocationRow, handleLocationCSV, showAssignLocationsModal, submitAssignLocations,
+  filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
   exportJobLocations,
   deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields,
