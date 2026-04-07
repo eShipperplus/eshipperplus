@@ -685,11 +685,16 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
     // Collect all reference data column names (union across all locations)
     const refCols = [...new Set(locations.flatMap(l => Object.keys(l.referenceData || {})))];
 
-    // Get job type capture field definitions
-    const jobTypesDoc = await db.collection('wh_config').doc('jobTypes').get();
-    const allJobTypes = jobTypesDoc.exists ? (jobTypesDoc.data().list || []) : Object.values(JOB_TYPE_DEFS);
-    const jobTypeDef = allJobTypes.find(jt => jt.id === job.jobTypeId) || JOB_TYPE_DEFS[job.jobTypeId];
-    const captureFields = jobTypeDef?.fields || [];
+    // Prefer CSV-defined capture fields (e.g. Lot, Expiry from CSV upload), fall back to job type fields
+    let captureFields = [];
+    if (job.csvCaptureFields && job.csvCaptureFields.length) {
+      captureFields = job.csvCaptureFields;
+    } else {
+      const jobTypesDoc = await db.collection('wh_config').doc('jobTypes').get();
+      const allJobTypes = jobTypesDoc.exists ? (jobTypesDoc.data().list || []) : Object.values(JOB_TYPE_DEFS);
+      const jobTypeDef = allJobTypes.find(jt => jt.id === job.jobTypeId) || JOB_TYPE_DEFS[job.jobTypeId];
+      captureFields = jobTypeDef?.fields || [];
+    }
 
     // Build rows
     const rows = locations.map(l => {
