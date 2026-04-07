@@ -705,7 +705,7 @@ function renderAnalytics() {
           <select id="af-customer"><option value="">All</option>${state.data.customers.map(c=>`<option>${c}</option>`).join('')}</select>
         </div>
         <div class="form-group"><label>Job Type</label>
-          <select id="af-type"><option value="">All</option><option value="bts">Back to Stock</option><option value="kit">Kitting</option></select>
+          <select id="af-type"><option value="">All</option>${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select>
         </div>
         <div class="form-group"><label>From</label><input type="date" id="af-from"/></div>
         <div class="form-group"><label>To</label><input type="date" id="af-to"/></div>
@@ -771,7 +771,7 @@ function renderAllJobs() {
           <select id="jf-customer"><option value="">All</option>${state.data.customers.map(c=>`<option>${c}</option>`).join('')}</select>
         </div>
         <div class="form-group"><label>Type</label>
-          <select id="jf-type"><option value="">All</option><option value="bts">Back to Stock</option><option value="kit">Kitting</option></select>
+          <select id="jf-type"><option value="">All</option>${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select>
         </div>
         <button class="btn btn-primary" onclick="applyJobsFilter()">Filter</button>
       </div>
@@ -899,8 +899,7 @@ function renderSelfLog() {
             <label>Job Type *</label>
             <select name="jobTypeId" required onchange="updateSelfLogFields(this.value)">
               <option value="">Select type…</option>
-              <option value="bts">Back to Stock</option>
-              <option value="kit">Kitting</option>
+              ${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -942,8 +941,7 @@ function renderCreateJob() {
             <label>Job Type *</label>
             <select name="jobTypeId" required>
               <option value="">Select type…</option>
-              <option value="bts">Back to Stock</option>
-              <option value="kit">Kitting</option>
+              ${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
             </select>
           </div>
         </div>
