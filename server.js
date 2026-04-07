@@ -28,7 +28,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const ROLES = ['admin', 'manager', 'associate', 'office_support'];
-const STATUSES = ['created', 'assigned_manager', 'assigned_associate', 'in_progress', 'completed'];
+const STATUSES = ['created', 'assigned_manager', 'assigned_associate', 'in_progress', 'pending_review', 'completed'];
 
 const JOB_TYPE_DEFS = {
   bts: {
@@ -436,6 +436,40 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
   }
 });
 
+app.put('/api/jobs/:id/submit-review', requireAuth, async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    const job = jobSnap.data();
+
+    const canSubmit = (job.assignedAssocId || []).includes(uid) || job.createdBy === uid;
+    if (!canSubmit) return res.status(403).json({ error: 'Not assigned to this job' });
+
+    const { fields, billable, associateNotes } = req.body;
+    const mergedFields = { ...job.fields, ...(fields || {}) };
+    const now = Timestamp.now();
+    const update = {
+      fields: mergedFields,
+      billable: billable !== undefined ? billable : job.billable,
+      associateNotes: associateNotes || '',
+      status: 'pending_review',
+      submittedBy: uid,
+      submittedByName: user.displayName,
+      submittedAt: now,
+      updatedBy: uid,
+      updatedByName: user.displayName,
+      updatedAt: now,
+    };
+    await db.collection('wh_jobs').doc(req.params.id).update(update);
+    await writeAudit(req.params.id, 'pending_review', uid, user.displayName, job, update);
+    res.json({ id: req.params.id, ...job, ...update });
+  } catch (err) {
+    console.error('PUT submit-review error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
   try {
     const { user, uid } = req;
@@ -453,7 +487,7 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
 
     if (!canComplete) return res.status(403).json({ error: 'Cannot complete this job' });
 
-    const { fields, billable } = req.body;
+    const { fields, billable, managerNotes } = req.body;
     const mergedFields = { ...job.fields, ...(fields || {}) };
 
     const { revenue, cost, profit, marginPct, rating } = await calculateRevenueCost(
@@ -465,6 +499,7 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
     const update = {
       fields: mergedFields,
       billable: billable !== undefined ? billable : job.billable,
+      managerNotes: managerNotes !== undefined ? managerNotes : (job.managerNotes || ''),
       status: 'completed',
       completedBy: uid,
       completedByName: user.displayName,
