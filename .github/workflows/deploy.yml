@@ -35,6 +35,15 @@ jobs:
             sleep 20
           done
 
+      - name: Deploy Firestore indexes
+        run: |
+          gcloud firestore indexes composite create \
+            --collection-group=wh_jobs \
+            --field-config=field-path=assignedAssocId,array-config=contains \
+            --field-config=field-path=createdAt,order=descending \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --quiet 2>/dev/null || echo "Index already exists, skipping"
+
       - name: Write env vars file and update Cloud Run
         env:
           FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
