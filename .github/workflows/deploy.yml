@@ -30,16 +30,33 @@ jobs:
             echo "Build status: $STATUS"
             if [ "$STATUS" = "SUCCESS" ]; then break; fi
             if [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "CANCELLED" ]; then
-              echo "Build failed with status: $STATUS"
-              exit 1
+              echo "Build failed: $STATUS"; exit 1
             fi
             sleep 20
           done
 
       - name: Inject Firebase env vars into Cloud Run
+        env:
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         run: |
-          gcloud run services update warehouse-billing \
-            --region northamerica-northeast2 \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --update-env-vars "GCP_PROJECT=${{ secrets.FIREBASE_PROJECT_ID }},FIREBASE_SERVICE_ACCOUNT=${{ secrets.FIREBASE_SA_JSON }}" \
-            --quiet
+          python3 - << 'PYEOF'
+          import os, yaml, subprocess
+
+          env_vars = {
+              'GCP_PROJECT': os.environ['FIREBASE_PROJECT_ID'],
+              'FIREBASE_SERVICE_ACCOUNT': os.environ['FIREBASE_SA_JSON'],
+          }
+
+          with open('/tmp/cloudrun-env.yaml', 'w') as f:
+              yaml.dump(env_vars, f)
+
+          subprocess.run([
+              'gcloud', 'run', 'services', 'update', 'warehouse-billing',
+              '--region', 'northamerica-northeast2',
+              '--project', os.environ['GCP_PROJECT_ID'],
+              '--env-vars-file', '/tmp/cloudrun-env.yaml',
+              '--quiet'
+          ], check=True)
+          PYEOF
