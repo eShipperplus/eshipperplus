@@ -11,4 +11,17 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
-      - run: gcloud builds submit --config cloudbuild.yaml --project ${{ secrets.GCP_PROJECT_ID }} --suppress-logs
+
+      - name: Build container image
+        run: gcloud builds submit --config cloudbuild.yaml --project ${{ secrets.GCP_PROJECT_ID }} --async
+
+      - name: Wait for image to be ready
+        run: sleep 90
+
+      - name: Set Firebase service account env var on Cloud Run
+        run: |
+          gcloud run services update warehouse-billing \
+            --region northamerica-northeast2 \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --update-env-vars "GCP_PROJECT=${{ secrets.FIREBASE_PROJECT_ID }},FIREBASE_SERVICE_ACCOUNT=${{ secrets.FIREBASE_SA_JSON }}" \
+            --quiet
