@@ -1839,14 +1839,18 @@ function renderRateTable() {
   const wrap = document.getElementById('rate-table-wrap');
   if (!customer) { wrap.innerHTML = ''; return; }
   const rateCards = state.data.rateCards;
-  const jobTypes = [
-    { id: 'bts', fields: getJobFields('bts').filter(f => f.type === 'number') },
-    { id: 'kit', fields: getJobFields('kit').filter(f => f.type === 'number') },
-  ];
+  // Use ALL job types from state, not just hardcoded bts/kit
+  const jobTypes = state.data.jobTypes.map(jt => ({
+    id: jt.id,
+    name: jt.name,
+    fields: (jt.fields || []).filter(f => f.type === 'number'),
+  })).filter(jt => jt.fields.length > 0);
+
+  if (!jobTypes.length) { wrap.innerHTML = '<p style="color:var(--text-light);font-size:13px;margin-top:12px">No job types with numeric fields found. Add job types first.</p>'; return; }
 
   wrap.innerHTML = jobTypes.map(jt=>`
-    <div style="margin-top:16px">
-      <div style="font-weight:700;margin-bottom:8px">${jobTypeName(jt.id)}</div>
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--grey)">
+      <div style="font-weight:700;font-size:15px;color:var(--primary);margin-bottom:12px">${jt.name}</div>
       ${jt.fields.map(f=>`
         <div class="toggle-row" style="margin-bottom:8px">
           <label style="min-width:140px;font-size:13px">${f.label}</label>
@@ -1863,10 +1867,10 @@ async function saveRates() {
   const customer = document.getElementById('rate-customer')?.value;
   if (!customer) { toast('Select a customer first'); return; }
 
-  const jobTypes = [
-    { id: 'bts', fields: getJobFields('bts').filter(f => f.type === 'number') },
-    { id: 'kit', fields: getJobFields('kit').filter(f => f.type === 'number') },
-  ];
+  const jobTypes = state.data.jobTypes.map(jt => ({
+    id: jt.id,
+    fields: (jt.fields || []).filter(f => f.type === 'number'),
+  })).filter(jt => jt.fields.length > 0);
 
   const newRates = JSON.parse(JSON.stringify(state.data.rateCards));
   if (!newRates[customer]) newRates[customer] = {};
