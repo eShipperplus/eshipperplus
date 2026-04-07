@@ -229,19 +229,18 @@ app.get('/api/init', requireAuth, async (req, res) => {
         .get();
     } else {
       // Associate: own jobs + assigned jobs
-      // Note: array-contains without orderBy needs no composite index
-      const [ownSnap, assignedSnap] = await Promise.all([
-        db.collection('wh_jobs').where('createdBy', '==', uid).orderBy('createdAt', 'desc').limit(100).get(),
-        db.collection('wh_jobs').where('assignedAssocId', 'array-contains', uid).limit(200).get(),
-      ]);
+      const ownSnap = await db.collection('wh_jobs').where('createdBy', '==', uid).orderBy('createdAt', 'desc').limit(100).get();
+      // array-contains without orderBy requires no composite index; catch any error gracefully
+      let assignedDocs = [];
+      try {
+        const assignedSnap = await db.collection('wh_jobs').where('assignedAssocId', 'array-contains', uid).limit(200).get();
+        assignedDocs = assignedSnap.docs;
+      } catch (e) {
+        console.warn('assignedAssocId query failed, falling back to own jobs only:', e.message);
+      }
       const jobMap = new Map();
-      [...ownSnap.docs, ...assignedSnap.docs].forEach((d) => jobMap.set(d.id, { id: d.id, ...d.data() }));
-      // Sort in memory — no composite index required
-      const jobs = Array.from(jobMap.values()).sort((a, b) => {
-        const ta = a.createdAt?._seconds || 0;
-        const tb = b.createdAt?._seconds || 0;
-        return tb - ta;
-      });
+      [...ownSnap.docs, ...assignedDocs].forEach((d) => jobMap.set(d.id, { id: d.id, ...d.data() }));
+      const jobs = Array.from(jobMap.values()).sort((a, b) => (b.createdAt?._seconds || 0) - (a.createdAt?._seconds || 0));
       return res.json({ user, jobs, customers, jobTypes, rateCards, targets });
     }
 
