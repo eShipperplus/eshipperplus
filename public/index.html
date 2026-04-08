@@ -729,10 +729,28 @@ function renderDashboard() {
     return d ? Date.now() - d.getTime() : 0;
   };
 
+  const TWO_HOURS = 2 * 3600000;
+  const unassignedOverdue = open.filter(j => {
+    const noAssoc = !j.assignedAssocId || (Array.isArray(j.assignedAssocId) ? j.assignedAssocId.length === 0 : false);
+    return ageMs(j) > TWO_HOURS && noAssoc;
+  });
+
   return `
     <div class="section-header"><h1>Executive Dashboard</h1>
       <button class="btn btn-teal btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
     </div>
+    ${unassignedOverdue.length ? `
+    <div style="background:#fff5f5;border:1px solid #fc8181;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
+      <span style="font-size:22px;flex-shrink:0">⚠️</span>
+      <div>
+        <div style="font-weight:700;color:#c53030;font-size:14px">
+          ${unassignedOverdue.length} job${unassignedOverdue.length>1?'s':''} waiting 2+ hours without a warehouse assignment
+        </div>
+        <div style="font-size:12px;color:#c53030;margin-top:3px">
+          ${unassignedOverdue.map(j=>`<span style="margin-right:12px">${j.customerId} — ${jobTypeName(j.jobTypeId)} <strong>(${Math.floor(ageMs(j)/3600000)}h ${Math.floor((ageMs(j)%3600000)/60000)}m)</strong></span>`).join('')}
+        </div>
+      </div>
+    </div>` : ''}
     <div class="kpi-row">${kpis.map(k=>`<div class="kpi"><div class="val">${k.val}</div><div class="lbl">${k.lbl}</div>${k.trend?`<div class="kpi-trend" style="color:var(--teal);font-size:11px;margin-top:4px">↑ ${k.trend}</div>`:''}</div>`).join('')}</div>
     <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
       ${['created','assigned_manager','assigned_associate','in_progress','pending_review','completed'].map(s=>`
@@ -766,18 +784,24 @@ function renderAnalytics() {
   // Build associate breakdown
   const assocMap = {};
   jobs.forEach(j => {
+    const jobTarget = (state.data.targets?.[j.jobTypeId]?.targetMarginPct) ?? null;
     (j.assignedAssocNames || []).forEach((name, i) => {
       const uid = (j.assignedAssocId || [])[i];
       const key = uid || name;
-      if (!assocMap[key]) assocMap[key] = { name, revenue:0, cost:0, profit:0, count:0, ratings:{great:0,good:0,needs_improvement:0} };
+      if (!assocMap[key]) assocMap[key] = { name, revenue:0, cost:0, profit:0, count:0, targetMarginSum:0, targetCount:0, ratings:{great:0,good:0,needs_improvement:0} };
       assocMap[key].revenue += j.revenue || 0;
       assocMap[key].cost += j.cost || 0;
       assocMap[key].profit += j.profit || 0;
       assocMap[key].count++;
+      if (jobTarget !== null) { assocMap[key].targetMarginSum += jobTarget; assocMap[key].targetCount++; }
       if (j.rating) assocMap[key].ratings[j.rating] = (assocMap[key].ratings[j.rating]||0)+1;
     });
   });
-  const rows = Object.values(assocMap);
+  const rows = Object.values(assocMap).sort((a,b) => {
+    const ma = a.revenue > 0 ? a.profit/a.revenue : -Infinity;
+    const mb = b.revenue > 0 ? b.profit/b.revenue : -Infinity;
+    return mb - ma;
+  });
 
   return `
     <div class="section-header"><h1>Profitability Analytics</h1></div>
@@ -798,18 +822,30 @@ function renderAnalytics() {
       <div class="card-title">Associate Breakdown</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Associate</th><th>Jobs</th><th>Revenue</th><th>Cost</th><th>Profit</th><th>Margin %</th><th>Great</th><th>Good</th><th>Needs Work</th></tr></thead>
+          <thead><tr><th>Associate</th><th>Jobs</th><th>Revenue</th><th>Cost</th><th>Profit</th><th>Margin %</th><th>vs Target</th><th>Avg Rating</th><th>Great</th><th>Good</th><th>Needs Work</th></tr></thead>
           <tbody>${rows.length ? rows.map(r=>{
-            const margin = r.revenue > 0 ? (r.profit/r.revenue*100).toFixed(1) : '—';
+            const actualMargin = r.revenue > 0 ? (r.profit/r.revenue*100) : null;
+            const marginStr = actualMargin !== null ? actualMargin.toFixed(1)+'%' : '—';
+            const avgTarget = r.targetCount > 0 ? r.targetMarginSum / r.targetCount : null;
+            const deviation = actualMargin !== null && avgTarget !== null ? (actualMargin - avgTarget) : null;
+            const devStr = deviation !== null ? `${deviation >= 0 ? '+' : ''}${deviation.toFixed(1)} pp` : '—';
+            const devColor = deviation === null ? 'var(--text-light)' : deviation >= 0 ? '#276749' : '#c53030';
+            const totalRated = (r.ratings.great||0)+(r.ratings.good||0)+(r.ratings.needs_improvement||0);
+            const avgScore = totalRated > 0 ? ((r.ratings.great||0)*3 + (r.ratings.good||0)*2 + (r.ratings.needs_improvement||0)) / totalRated : null;
+            const avgScoreStr = avgScore !== null ? avgScore.toFixed(1) : '—';
+            const avgScoreColor = avgScore === null ? 'var(--text-light)' : avgScore >= 2.5 ? '#276749' : avgScore >= 1.5 ? '#744210' : '#c53030';
+            const avgLabel = avgScore === null ? '—' : avgScore >= 2.5 ? 'Great' : avgScore >= 1.5 ? 'Good' : 'Needs Work';
             return `<tr>
-              <td>${r.name}</td><td>${r.count}</td>
+              <td><strong>${r.name}</strong></td><td>${r.count}</td>
               <td>${fmt(r.revenue)}</td><td>${fmt(r.cost)}</td><td>${fmt(r.profit)}</td>
-              <td>${margin}%</td>
+              <td><strong>${marginStr}</strong></td>
+              <td style="font-weight:600;color:${devColor}">${devStr}</td>
+              <td><span style="font-weight:600;color:${avgScoreColor}">${avgLabel}</span> <span style="color:var(--text-light);font-size:11px">${avgScore!==null?avgScoreStr:''}</span></td>
               <td><span class="badge badge-great">${r.ratings.great||0}</span></td>
               <td><span class="badge badge-good">${r.ratings.good||0}</span></td>
               <td><span class="badge badge-needs_improvement">${r.ratings.needs_improvement||0}</span></td>
             </tr>`;
-          }).join('') : '<tr><td colspan="9" class="empty-state">No completed jobs</td></tr>'}
+          }).join('') : '<tr><td colspan="11" class="empty-state">No completed jobs</td></tr>'}
           </tbody>
         </table>
       </div>
