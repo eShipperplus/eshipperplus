@@ -2801,6 +2801,47 @@ function handleLocationCSV(input) {
   input.value = '';
 }
 
+// ── Upload locations CSV to an existing job ──
+async function uploadLocationsToJob(jobId, input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  const text = await file.text();
+  let rows;
+  try { rows = parseCSV(text); } catch(err) { toast('CSV parse error: ' + err.message); return; }
+  if (!rows.length) { toast('CSV is empty'); return; }
+
+  const headers = Object.keys(rows[0]);
+  const refCols = headers.filter(h => rows.some(r => (r[h] || '').trim()));
+  const captureCols = headers.filter(h => rows.every(r => !(r[h] || '').trim()));
+  const nameCol = refCols.find(h => /^location$/i.test(h.trim())) || refCols[0] || headers[0];
+
+  const newLocs = rows.map((row, i) => {
+    const name = (row[nameCol] || '').trim() || `Row ${i + 1}`;
+    const referenceData = {};
+    refCols.forEach(h => { referenceData[h] = row[h] || ''; });
+    return { id: 'loc_' + Date.now() + '_' + i, name, referenceData, csvCaptureFields: captureCols };
+  });
+
+  const job = state.data.jobs.find(j => j.id === jobId);
+  const existing = job?.locations || [];
+  const merged = [...existing, ...newLocs];
+
+  try {
+    await apiFetch(`/api/jobs/${jobId}/locations`, {
+      method: 'PUT',
+      body: JSON.stringify({ locations: merged }),
+    });
+    await loadData();
+    document.querySelector('.modal-overlay')?.remove();
+    renderView();
+    let msg = `${newLocs.length} location(s) added`;
+    if (captureCols.length) msg += ` — associates fill in: ${captureCols.join(', ')}`;
+    toast(msg, 4000);
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
 // ── Create job (office support) ──
 async function submitCreateJob(e) {
   e.preventDefault();
@@ -2874,7 +2915,14 @@ async function openJobModal(jobId) {
       <div class="form-group">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <label style="margin:0">Locations (${(job.locations||[]).filter(l=>l.status==='done').length}/${(job.locations||[]).length} done)</label>
-          ${state.user.role==='admin'||state.user.role==='manager' ? `<button class="btn btn-primary btn-sm" onclick="showAssignLocationsModal('${job.id}')">Assign Locations</button>` : ''}
+          <div style="display:flex;gap:6px">
+            ${['admin','manager','office_support'].includes(state.user.role) ? `
+              <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">
+                ⬆ Upload CSV
+                <input type="file" accept=".csv,.xlsx" style="display:none" onchange="uploadLocationsToJob('${job.id}',this)"/>
+              </label>` : ''}
+            ${state.user.role==='admin'||state.user.role==='manager' ? `<button class="btn btn-primary btn-sm" onclick="showAssignLocationsModal('${job.id}')">Assign Locations</button>` : ''}
+          </div>
         </div>
         ${(job.locations||[]).map(l=>{
           const refEntries = Object.entries(l.referenceData||{}).filter(([,v])=>v);
@@ -2903,6 +2951,11 @@ async function openJobModal(jobId) {
         `<button class="btn btn-teal" onclick="this.closest('.modal-overlay').remove();openSubmitReviewModal('${job.id}')">Submit for Review</button>`:''}
       ${(state.user.role==='admin'||state.user.role==='manager'||job.createdBy===state.user?.uid)?
         `<button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove();showEditJobModal('${job.id}')">✏ Edit</button>`:''}
+      ${['admin','manager','office_support'].includes(state.user.role) && job.status !== 'completed' ? `
+        <label class="btn btn-ghost" style="cursor:pointer;margin:0">
+          ⬆ Upload Locations CSV
+          <input type="file" accept=".csv,.xlsx" style="display:none" onchange="uploadLocationsToJob('${job.id}',this)"/>
+        </label>` : ''}
       ${(job.locations||[]).length && (state.user.role==='admin'||state.user.role==='manager')?
         `<button class="btn btn-ghost" onclick="exportJobLocations('${job.id}')">⬇ Export Excel</button>`:''}
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
@@ -3891,7 +3944,7 @@ Object.assign(window, {
   addLocationRow, handleLocationCSV, showAssignLocationsModal, submitAssignLocations,
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
-  exportJobLocations,
+  exportJobLocations, uploadLocationsToJob,
   deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
   updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,
