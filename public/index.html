@@ -231,6 +231,7 @@ tr:hover td { background: #f0f4ff; }
   <div id="topbar">
     <div class="logo">eShipper<span>+</span> Warehouse</div>
     <button id="refresh-btn" onclick="manualRefresh()" title="Refresh" style="background:none;border:none;color:rgba(255,255,255,0.8);font-size:20px;cursor:pointer;padding:4px 8px;line-height:1">↻</button>
+    <button id="data-fresh-badge" onclick="applyDataRefresh()" style="display:none;background:var(--teal);color:#fff;border:none;border-radius:20px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;animation:fadeInUp 0.3s">🔄 New data — click to update</button>
     <div class="user-avatar" id="topbar-user"></div>
     <button class="btn btn-ghost btn-sm" id="signout-btn" style="color:#fff;border-color:rgba(255,255,255,0.4)">Sign Out</button>
   </div>
@@ -447,6 +448,14 @@ onAuthStateChanged(firebaseAuth, async (fbUser) => {
     }
 
     await loadData(); // Full data load — overwrites with server-confirmed role
+
+    // Restore last visited view so browser refresh doesn't reset to dashboard
+    const savedView = sessionStorage.getItem('wh_last_view');
+    const allowedViews = (NAV_ITEMS[state.user?.role] || NAV_ITEMS.associate).map(i => i.id);
+    if (savedView && allowedViews.includes(savedView)) {
+      state.view = savedView;
+    }
+
     renderNav();
     renderView();
 
@@ -463,36 +472,16 @@ onAuthStateChanged(firebaseAuth, async (fbUser) => {
       }
     }, 50 * 60 * 1000);
 
-    // Auto-refresh data every 60 seconds so assigned jobs appear without manual refresh.
-    // Only re-renders the view when the user is NOT actively interacting — open modals,
-    // focused inputs, and form views (create-job) are all protected from interruption.
-    let _pendingRefresh = false;
+    // Auto-refresh data every 60 seconds — completely silent (no view re-render = no flicker).
+    // Shows a subtle "New data" pill in the topbar the user can click to apply the update.
     setInterval(async () => {
       if (document.hidden) return;
+      const prevCount = (state.data.jobs || []).length;
       await loadData();
-      const hasModal   = !!document.querySelector('.modal-overlay');
-      const activeTag  = document.activeElement?.tagName || '';
-      const isTyping   = ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag);
-      const isFormView = state.view === 'create-job';
-      if (hasModal || isTyping || isFormView) {
-        _pendingRefresh = true; // re-render once the user finishes
-      } else {
-        _pendingRefresh = false;
-        renderView();
-      }
+      const newCount  = (state.data.jobs || []).length;
+      // Only notify if something actually changed
+      if (newCount !== prevCount) showDataFreshBadge();
     }, 60 * 1000);
-
-    // Flush a pending background refresh the moment a modal closes or focus leaves an input
-    document.addEventListener('focusout', () => {
-      if (!_pendingRefresh) return;
-      const activeTag = document.activeElement?.tagName || '';
-      const stillTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag);
-      const hasModal = !!document.querySelector('.modal-overlay');
-      if (!stillTyping && !hasModal && state.view !== 'create-job') {
-        _pendingRefresh = false;
-        renderView();
-      }
-    });
 
   } else {
     state.user = null;
@@ -516,6 +505,18 @@ async function manualRefresh() {
     renderView();
     toast('Refreshed', 1500);
   }
+}
+
+function showDataFreshBadge() {
+  const badge = document.getElementById('data-fresh-badge');
+  if (badge) badge.style.display = 'inline-block';
+}
+
+function applyDataRefresh() {
+  const badge = document.getElementById('data-fresh-badge');
+  if (badge) badge.style.display = 'none';
+  renderNav();
+  renderView();
 }
 
 // ── Data Load ──
@@ -611,6 +612,9 @@ function renderNav() {
     el.addEventListener('click', (e) => {
       e.preventDefault();
       state.view = el.dataset.view;
+      sessionStorage.setItem('wh_last_view', state.view);
+      const badge = document.getElementById('data-fresh-badge');
+      if (badge) badge.style.display = 'none';
       renderNav();
       renderView();
     });
@@ -4056,7 +4060,7 @@ Object.assign(window, {
   exportJobLocations, uploadLocationsToJob,
   deleteJob, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
   updateSelfLogFields, updateCreateJobFields,
-  debounceFilterActivityLog,
+  debounceFilterActivityLog, applyDataRefresh,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
   updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
