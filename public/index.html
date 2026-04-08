@@ -653,6 +653,7 @@ function showModal(html) {
   overlay.innerHTML = `<div class="modal">${html}</div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  wireConditionalFields(overlay);
   return overlay;
 }
 
@@ -664,28 +665,81 @@ function getJobFields(jobTypeId) {
     : [{id:'labour_hours',label:'Labour Hours',type:'number'},{id:'units',label:'Units',type:'number'},{id:'pallets',label:'Pallets',type:'number'},{id:'labels',label:'Labels',type:'number'},{id:'skus',label:'SKUs',type:'number'},{id:'kits_made',label:'Kits Made',type:'number'}];
 }
 
+function evalShowWhen(sw, values) {
+  if (!sw) return true;
+  const v = values[sw.field] ?? '';
+  if (sw.values) return sw.values.includes(v);
+  if (sw.value !== undefined) return v === sw.value;
+  return v !== '';  // showWhen: { field: 'x' } → show when x has any value
+}
+
 function renderFieldInputs(fields, values = {}) {
-  return fields.map(f => `
-    <div class="form-group">
+  return fields.map(f => {
+    const sw = f.showWhen || null;
+    const visible = evalShowWhen(sw, values);
+    const swAttr = sw ? ` data-show-when='${JSON.stringify(sw)}'` : '';
+    const input = f.type === 'select' && (f.options||[]).length
+      ? `<select name="${f.id}" ${f.required?'required':''} style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;background:#fff">
+          <option value="">— Select —</option>
+          ${(f.options||[]).map(o=>`<option value="${o}"${values[f.id]===o?' selected':''}>${o}</option>`).join('')}
+         </select>`
+      : f.type === 'textarea'
+      ? `<textarea name="${f.id}" rows="3" placeholder="${f.label}" ${f.required?'required':''}
+          style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;font-family:inherit;resize:vertical"
+        >${values[f.id]||''}</textarea>`
+      : `<input type="${f.type||'text'}" name="${f.id}" value="${values[f.id]||''}"
+          placeholder="${f.label}" ${f.required?'required':''}/>`;
+    return `<div class="form-group" data-field-id="${f.id}"${swAttr} style="display:${visible?'block':'none'}">
       <label>${f.label}${f.required ? ' *' : ''}</label>
-      ${f.type === 'select' && (f.options||[]).length
-        ? `<select name="${f.id}" ${f.required?'required':''} style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;background:#fff">
-            <option value="">— Select —</option>
-            ${(f.options||[]).map(o=>`<option value="${o}"${values[f.id]===o?' selected':''}>${o}</option>`).join('')}
-           </select>`
-        : f.type === 'textarea'
-        ? `<textarea name="${f.id}" rows="3" placeholder="${f.label}" ${f.required?'required':''}
-            style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;font-family:inherit;resize:vertical"
-          >${values[f.id]||''}</textarea>`
-        : `<input type="${f.type||'text'}" name="${f.id}" value="${values[f.id]||''}"
-            placeholder="${f.label}" ${f.required?'required':''}/>`}
-    </div>
-  `).join('');
+      ${input}
+    </div>`;
+  }).join('');
+}
+
+// Call after inserting renderFieldInputs HTML into the DOM to wire up show/hide logic
+function wireConditionalFields(container) {
+  const allGroups = container.querySelectorAll('[data-field-id][data-show-when]');
+  if (!allGroups.length) return;
+
+  // Build map: watchedFieldId → [dependent groups]
+  const watchMap = {};
+  allGroups.forEach(grp => {
+    try {
+      const sw = JSON.parse(grp.dataset.showWhen);
+      if (!watchMap[sw.field]) watchMap[sw.field] = [];
+      watchMap[sw.field].push({ grp, sw });
+    } catch(e) {}
+  });
+
+  // Attach listeners to trigger fields
+  Object.entries(watchMap).forEach(([fieldId, deps]) => {
+    const trigger = container.querySelector(`[name="${fieldId}"]`);
+    if (!trigger) return;
+    const update = () => {
+      const v = trigger.value;
+      deps.forEach(({ grp, sw }) => {
+        const show = sw.values ? sw.values.includes(v)
+          : sw.value !== undefined ? v === sw.value
+          : v !== '';
+        grp.style.display = show ? 'block' : 'none';
+        // Clear value when hiding so it doesn't get submitted
+        if (!show) {
+          const input = grp.querySelector('input,select,textarea');
+          if (input) input.value = '';
+        }
+      });
+    };
+    trigger.addEventListener('change', update);
+    trigger.addEventListener('input', update);
+  });
 }
 
 function collectFields(form, fields) {
   const result = {};
   fields.forEach(f => {
+    const grp = form.querySelector(`[data-field-id="${f.id}"]`);
+    // Skip conditionally hidden fields
+    if (grp && grp.style.display === 'none') return;
     const el = form.querySelector(`[name="${f.id}"]`);
     if (!el) return;
     const v = el.value.trim();
@@ -1561,32 +1615,60 @@ function showAddJobTypeModal() {
   addFieldRow();
 }
 
-function addFieldRow(fieldId='', label='', type='text', required=false, options='') {
+function addFieldRow(fieldId='', label='', type='text', required=false, options='', showWhen=null) {
   const list = document.getElementById('jt-fields-list');
   if (!list) return;
+  const swField  = showWhen?.field  || '';
+  const swValues = showWhen?.values ? showWhen.values.join(', ') : (showWhen?.value ?? '');
+  const hasCond  = !!(swField);
   const row = document.createElement('div');
   row.className = 'field-row';
-  row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px';
+  row.style.cssText = 'margin-bottom:8px;border:1px solid var(--border);border-radius:6px;padding:8px';
   row.innerHTML = `
-    <input type="text" placeholder="field_id" value="${fieldId}" style="flex:1;min-width:90px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
-    <input type="text" placeholder="Label" value="${label}" style="flex:1.5;min-width:110px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
-    <select class="field-type-sel" onchange="toggleOptionsInput(this)" style="padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px">
-      <option value="text"     ${type==='text'    ?'selected':''}>text</option>
-      <option value="number"   ${type==='number'  ?'selected':''}>number</option>
-      <option value="textarea" ${type==='textarea'?'selected':''}>textarea</option>
-      <option value="select"   ${type==='select'  ?'selected':''}>dropdown</option>
-    </select>
-    <input type="text" class="field-options-input" placeholder="Option 1, Option 2, …" value="${options}"
-      style="flex:2;min-width:150px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px;display:${type==='select'?'block':'none'}"/>
-    <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap">
-      <input type="checkbox" ${required?'checked':''}/> Required
-    </label>
-    <div style="display:flex;flex-direction:column;gap:2px">
-      <button onclick="moveFieldRow(this,'up')"   title="Move up"   style="background:#a0aec0;color:#fff;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;line-height:1.4">▲</button>
-      <button onclick="moveFieldRow(this,'down')" title="Move down" style="background:#a0aec0;color:#fff;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;line-height:1.4">▼</button>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      <input type="text" placeholder="field_id" value="${fieldId}" style="flex:1;min-width:90px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
+      <input type="text" placeholder="Label" value="${label}" style="flex:1.5;min-width:110px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
+      <select class="field-type-sel" onchange="toggleOptionsInput(this)" style="padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px">
+        <option value="text"     ${type==='text'    ?'selected':''}>text</option>
+        <option value="number"   ${type==='number'  ?'selected':''}>number</option>
+        <option value="textarea" ${type==='textarea'?'selected':''}>textarea</option>
+        <option value="select"   ${type==='select'  ?'selected':''}>dropdown</option>
+      </select>
+      <input type="text" class="field-options-input" placeholder="Option 1, Option 2, …" value="${options}"
+        style="flex:2;min-width:150px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px;display:${type==='select'?'block':'none'}"/>
+      <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap">
+        <input type="checkbox" ${required?'checked':''}/> Required
+      </label>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <button onclick="moveFieldRow(this,'up')"   title="Move up"   style="background:#a0aec0;color:#fff;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;line-height:1.4">▲</button>
+        <button onclick="moveFieldRow(this,'down')" title="Move down" style="background:#a0aec0;color:#fff;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;line-height:1.4">▼</button>
+      </div>
+      <button onclick="this.closest('.field-row').remove()" style="background:var(--danger);color:#fff;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px">✕</button>
     </div>
-    <button onclick="this.parentElement.remove()" style="background:var(--danger);color:#fff;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px">✕</button>`;
+    <div style="margin-top:5px">
+      <button type="button" onclick="toggleConditionRow(this)"
+        style="background:none;border:none;color:#667eea;font-size:11px;cursor:pointer;padding:0;text-decoration:underline">
+        ${hasCond ? '▾ Condition set' : '▸ Add condition'}
+      </button>
+      <div class="field-condition-row" style="display:${hasCond?'flex':'none'};flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;padding:6px 8px;background:#f7f8ff;border-radius:5px">
+        <span style="font-size:11px;color:#718096;white-space:nowrap">Show only when</span>
+        <input type="text" class="sw-field" placeholder="field_id" value="${swField}"
+          style="flex:1;min-width:80px;padding:5px 7px;border:1px solid #c3c8f0;border-radius:4px;font-size:12px"/>
+        <span style="font-size:11px;color:#718096">equals</span>
+        <input type="text" class="sw-values" placeholder="Value1, Value2 (comma-separated)" value="${swValues}"
+          style="flex:2;min-width:120px;padding:5px 7px;border:1px solid #c3c8f0;border-radius:4px;font-size:12px"/>
+        <span style="font-size:10px;color:#a0aec0">(leave blank = any value)</span>
+      </div>
+    </div>`;
   list.appendChild(row);
+}
+
+function toggleConditionRow(btn) {
+  const condRow = btn.parentElement.querySelector('.field-condition-row');
+  if (!condRow) return;
+  const showing = condRow.style.display !== 'none';
+  condRow.style.display = showing ? 'none' : 'flex';
+  btn.textContent = showing ? '▸ Add condition' : '▾ Condition set';
 }
 
 function toggleOptionsInput(sel) {
@@ -1653,7 +1735,7 @@ function showEditJobTypeModal(id) {
       <button class="btn btn-primary" onclick="submitEditJobType('${id}')">Save</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
-  (jt.fields||[]).forEach(f => addFieldRow(f.id, f.label, f.type||'text', f.required||false, (f.options||[]).join(', ')));
+  (jt.fields||[]).forEach(f => addFieldRow(f.id, f.label, f.type||'text', f.required||false, (f.options||[]).join(', '), f.showWhen||null));
 }
 
 async function submitEditJobType(id) {
@@ -1675,14 +1757,30 @@ function collectFieldRows() {
   const rows = document.querySelectorAll('#jt-fields-list .field-row');
   const fields = [];
   rows.forEach(row => {
-    const inputs = row.querySelectorAll('input[type=text], input[type=number]');
-    const select = row.querySelector('select');
+    const mainRow = row.querySelector('div');
+    const inputs = mainRow ? mainRow.querySelectorAll('input[type=text]') : row.querySelectorAll('input[type=text]');
+    const select = row.querySelector('select.field-type-sel');
     const required = row.querySelector('input[type=checkbox]')?.checked || false;
     const fieldId = inputs[0]?.value.trim().replace(/\s+/g,'_').toLowerCase();
     const label = inputs[1]?.value.trim();
     const optionsRaw = row.querySelector('.field-options-input')?.value.trim() || '';
     const options = select?.value === 'select' ? optionsRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
-    if (fieldId && label) fields.push({ id: fieldId, label, type: select?.value || 'text', required, ...(options.length ? { options } : {}) });
+    // Conditional show/when
+    const swFieldVal = row.querySelector('.sw-field')?.value.trim() || '';
+    const swValuesRaw = row.querySelector('.sw-values')?.value.trim() || '';
+    let showWhen = null;
+    if (swFieldVal) {
+      const vals = swValuesRaw ? swValuesRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+      showWhen = vals.length > 1 ? { field: swFieldVal, values: vals }
+        : vals.length === 1 ? { field: swFieldVal, value: vals[0] }
+        : { field: swFieldVal };
+    }
+    if (fieldId && label) {
+      const f = { id: fieldId, label, type: select?.value || 'text', required };
+      if (options.length) f.options = options;
+      if (showWhen) f.showWhen = showWhen;
+      fields.push(f);
+    }
   });
   return fields;
 }
@@ -2747,6 +2845,7 @@ function updateSelfLogFields(jobTypeId) {
   if (!wrap || !jobTypeId) { if (wrap) wrap.innerHTML = ''; return; }
   const fields = getJobFields(jobTypeId);
   wrap.innerHTML = renderFieldInputs(fields);
+  wireConditionalFields(wrap);
 }
 
 // ── Show create job modal (from All Jobs) ──
@@ -3115,7 +3214,7 @@ Object.assign(window, {
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
   uploadCustomersCSV, addCustomer, removeCustomer,
   uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
-  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, toggleOptionsInput, moveFieldRow, selectJtColor,
+  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, toggleOptionsInput, toggleConditionRow, moveFieldRow, selectJtColor,
   seedBuiltInJobTypes, submitNewJobType, submitEditJobType,
   showInviteUserModal, submitInviteUser, assignUserTeam,
   showEditUserModal, submitEditUser, getPasswordResetLink,

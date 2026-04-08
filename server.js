@@ -134,10 +134,16 @@ const JOB_TYPE_DEFS = {
   returns_inspection: {
     id: 'returns_inspection', name: 'Returns Inspection', color: 'orange',
     fields: [
+      { id: 'condition',        label: 'Item Condition',     type: 'select', required: true,
+        options: ['Sellable', 'Damaged', 'Expired', 'Defective', 'Unknown'] },
+      { id: 'disposition',      label: 'Disposition',        type: 'select', required: false,
+        options: ['Return to Vendor', 'Salvage', 'Destroy', 'Donate', 'Restock'],
+        showWhen: { field: 'condition', values: ['Damaged', 'Expired', 'Defective'] } },
       { id: 'inspection_hours', label: 'Inspection Hours',   type: 'number', required: false },
       { id: 'units',            label: 'Units Handled',      type: 'number', required: false },
       { id: 'cartons',          label: 'Cartons Handled',    type: 'number', required: false },
       { id: 'pallets',          label: 'Pallets Handled',    type: 'number', required: false },
+      { id: 'notes',            label: 'Notes / Comments',   type: 'textarea', required: false },
     ],
   },
   relabelling_repack: {
