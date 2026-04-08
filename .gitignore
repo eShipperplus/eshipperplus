@@ -1,0 +1,6 @@
+node_modules/
+.env
+.env.*
+jest-results.json
+coverage/
+.claude/
