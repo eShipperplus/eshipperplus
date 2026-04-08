@@ -80,8 +80,16 @@ jobs:
           FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
         run: |
-          python3 -c "import os,yaml; yaml.dump({'GCP_PROJECT':os.environ['FIREBASE_PROJECT_ID'],'FIREBASE_SERVICE_ACCOUNT':os.environ['FIREBASE_SA_JSON']},open('/tmp/ev.yaml','w'))"
+          python3 -c "
+import os, yaml
+yaml.dump({
+  'GCP_PROJECT': os.environ['FIREBASE_PROJECT_ID'],
+  'FIREBASE_SERVICE_ACCOUNT': os.environ['FIREBASE_SA_JSON'],
+  'FIREBASE_WEB_API_KEY': os.environ['FIREBASE_WEB_API_KEY'],
+}, open('/tmp/ev.yaml', 'w'))
+"
           gcloud run services update warehouse-billing \
             --region northamerica-northeast2 \
             --project "$GCP_PROJECT_ID" \

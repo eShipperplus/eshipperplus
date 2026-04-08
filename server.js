@@ -301,6 +301,29 @@ async function writeAudit(jobId, action, uid, name, before, after, email) {
   await db.collection('wh_audit').add(record);
 }
 
+// ─── Email Helper ─────────────────────────────────────────────────────────────
+// Sends Firebase's built-in password-reset / invite email via the REST API.
+// Requires FIREBASE_WEB_API_KEY env var (the web API key from Firebase Console).
+async function sendPasswordResetEmail(email) {
+  const apiKey = process.env.FIREBASE_WEB_API_KEY;
+  if (!apiKey) {
+    console.warn('[sendPasswordResetEmail] FIREBASE_WEB_API_KEY not set — skipping email send');
+    return { sent: false, reason: 'no_api_key' };
+  }
+  const url = `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    console.error('[sendPasswordResetEmail] Firebase error:', data);
+    return { sent: false, reason: data?.error?.message || 'firebase_error' };
+  }
+  return { sent: true };
+}
+
 // ─── Universal Transaction Log ────────────────────────────────────────────────
 // Writes to wh_logs — covers jobs, users, config, templates, teams
 async function writeLog({ action, entity, entityId, entityLabel, uid, name, email, role, changes, metadata }) {
@@ -1224,9 +1247,12 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
           memberIds: FieldValue.arrayUnion(existingDoc.id),
         }).catch(() => {});
       }
-      // Generate password reset link so admin can share it
-      const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
-      return res.json({ status: 'updated', uid: existingDoc.id, resetLink });
+      // Send invite email + generate fallback link
+      const [emailResult, resetLink] = await Promise.all([
+        sendPasswordResetEmail(emailKey).catch(() => ({ sent: false })),
+        auth.generatePasswordResetLink(emailKey).catch(() => null),
+      ]);
+      return res.json({ status: 'updated', uid: existingDoc.id, resetLink, emailSent: emailResult.sent });
     }
 
     // Create Firebase Auth account if it doesn't exist yet
@@ -1252,14 +1278,17 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
       invitedAt: Timestamp.now(),
     });
 
-    // Generate a password-set link (looks like password reset but lets them choose their password)
-    const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
+    // Send invite email + generate fallback link in parallel
+    const [emailResult, resetLink] = await Promise.all([
+      sendPasswordResetEmail(emailKey).catch(() => ({ sent: false })),
+      auth.generatePasswordResetLink(emailKey).catch(() => null),
+    ]);
 
     await writeLog({ action: 'user.invited', entity: 'user', entityId: authUser.uid,
       entityLabel: emailKey, uid: req.uid, name: req.user.displayName,
       email: req.user.email, role: req.user.role,
-      metadata: { invitedRole: claimRole, displayName: nameToUse } });
-    res.json({ status: 'invited', email: emailKey, uid: authUser.uid, resetLink });
+      metadata: { invitedRole: claimRole, displayName: nameToUse, emailSent: emailResult.sent } });
+    res.json({ status: 'invited', email: emailKey, uid: authUser.uid, resetLink, emailSent: emailResult.sent });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

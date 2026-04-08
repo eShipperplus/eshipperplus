@@ -2613,7 +2613,13 @@ async function submitInviteUser() {
     document.querySelector('.modal-overlay')?.remove();
     await loadData();
     renderView();
-    toast(result.status === 'updated' ? `${email} updated` : `Account created for ${email}`, 3000);
+    if (result.status === 'updated') {
+      toast(`${email} updated`, 3000);
+    } else if (result.emailSent) {
+      toast(`✉️ Invite email sent to ${email}`, 4000);
+    } else {
+      toast(`Account created for ${email} — share the link manually`, 4000);
+    }
   } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
