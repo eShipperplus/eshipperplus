@@ -1076,6 +1076,13 @@ function renderAllJobs() {
     </div>
     <div class="card">
       <div class="filter-row">
+        <div class="form-group"><label>View</label>
+          <select id="jf-view">
+            <option value="">All Jobs</option>
+            <option value="mine">Created by Me</option>
+            <option value="assigned">Assigned to Me</option>
+          </select>
+        </div>
         <div class="form-group"><label>Status</label>
           <select id="jf-status"><option value="">All</option>
             ${['created','assigned_manager','assigned_associate','in_progress','pending_review','completed'].map(s=>`<option value="${s}">${s.replace(/_/g,' ')}</option>`).join('')}
@@ -1100,7 +1107,7 @@ function renderAllJobs() {
 
 function renderJobRows(jobs) {
   if (!jobs.length) return '<tr><td colspan="11" class="empty-state">No jobs found</td></tr>';
-  const canAssign = state.user.role === 'admin' || state.user.role === 'manager';
+  const canAssign = ['admin','manager','office_support'].includes(state.user.role);
   return jobs.map(j=>`<tr>
     <td><span style="font-weight:700;color:var(--primary);font-size:12px;white-space:nowrap">${j.jobNumber||''}</span></td>
     <td>${j.customerId}</td>
@@ -3497,11 +3504,17 @@ function applyAnalyticsFilter() {
 
 // ── Jobs filter ──
 function applyJobsFilter() {
+  const view = document.getElementById('jf-view')?.value;
   const status = document.getElementById('jf-status')?.value;
   const customer = document.getElementById('jf-customer')?.value;
   const type = document.getElementById('jf-type')?.value;
+  const uid = state.user?.uid;
 
   let jobs = state.data.jobs;
+  if (view === 'mine') jobs = jobs.filter(j => j.createdBy === uid);
+  else if (view === 'assigned') jobs = jobs.filter(j =>
+    j.assignedManagerId === uid || (j.assignedAssocId||[]).includes(uid)
+  );
   if (status) jobs = jobs.filter(j => j.status === status);
   if (customer) jobs = jobs.filter(j => j.customerId === customer);
   if (type) jobs = jobs.filter(j => j.jobTypeId === type);

@@ -466,15 +466,8 @@ app.get('/api/init', requireAuth, async (req, res) => {
     let jobsQuery = db.collection('wh_jobs').orderBy('createdAt', 'desc').limit(500);
     let jobsSnap;
 
-    if (user.role === 'admin' || user.role === 'manager') {
+    if (user.role === 'admin' || user.role === 'manager' || user.role === 'office_support') {
       jobsSnap = await jobsQuery.get();
-    } else if (user.role === 'office_support') {
-      jobsSnap = await db
-        .collection('wh_jobs')
-        .where('createdBy', '==', uid)
-        .orderBy('createdAt', 'desc')
-        .limit(200)
-        .get();
     } else {
       // Associate: own jobs + assigned jobs
       const ownSnap = await db.collection('wh_jobs').where('createdBy', '==', uid).orderBy('createdAt', 'desc').limit(100).get();
@@ -496,14 +489,14 @@ app.get('/api/init', requireAuth, async (req, res) => {
 
     const payload = { user, jobs, customers, jobTypes, rateCards, targets };
 
-    // Manager + Admin: include templates
-    if (user.role === 'admin' || user.role === 'manager') {
+    // Admin + Office Support + Manager: include templates
+    if (user.role === 'admin' || user.role === 'manager' || user.role === 'office_support') {
       const templatesSnap = await db.collection('wh_templates').orderBy('createdAt', 'desc').get();
       payload.templates = templatesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     }
 
-    // Admin-only: include all users and teams
-    if (user.role === 'admin') {
+    // Admin + Office Support: include all users and teams (needed for manager dropdown + user directory)
+    if (user.role === 'admin' || user.role === 'office_support') {
       const [usersSnap, teamsSnap] = await Promise.all([
         db.collection('wh_users').get(),
         db.collection('wh_teams').get(),
