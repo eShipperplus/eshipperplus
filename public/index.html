@@ -555,8 +555,14 @@ const NAV_ITEMS = {
     { id: 'self-log', label: 'Self-Log', icon: '✏️' },
   ],
   office_support: [
-    { id: 'create-job', label: 'Create Job', icon: '➕' },
-    { id: 'my-jobs', label: 'My Jobs', icon: '📋' },
+    { id: 'dashboard',    label: 'Dashboard',    icon: '📊', group: 'Overview' },
+    { id: 'jobs',         label: 'All Jobs',      icon: '📦', group: 'Operations' },
+    { id: 'create-job',   label: 'Create Job',    icon: '➕' },
+    { id: 'templates',    label: 'Templates',     icon: '📋' },
+    { id: 'customers',    label: 'Customers',     icon: '🏢', group: 'Config' },
+    { id: 'jobtypes',     label: 'Job Types',     icon: '🔧' },
+    { id: 'users',        label: 'Users & Teams', icon: '👥', group: 'Admin' },
+    { id: 'activity-log', label: 'Activity Log',  icon: '📜' },
   ],
 };
 
@@ -2026,9 +2032,10 @@ function downloadCSVTemplate(filename, headers, sampleRows) {
 // ── Customers ──
 function renderCustomers() {
   const customers = state.data.customers;
+  const readOnly = state.user?.role === 'office_support';
   return `
     <div class="section-header"><h1>Customers</h1>
-      <div style="display:flex;gap:8px">
+      ${readOnly ? '' : `<div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('customers-template.csv',
           ['name'],
           [['Acme Corp'],['Widget Co'],['Global Logistics']])">
@@ -2037,27 +2044,27 @@ function renderCustomers() {
         <label class="btn btn-teal btn-sm" style="cursor:pointer">
           ⬆ Upload CSV <input type="file" accept=".csv" style="display:none" onchange="uploadCustomersCSV(this)"/>
         </label>
-      </div>
+      </div>`}
     </div>
-    <div class="card" style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
+    ${readOnly ? '' : `<div class="card" style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
       <strong>CSV format:</strong> Single column <code>name</code> — one customer per row. Uploading merges with existing customers.
-    </div>
+    </div>`}
     <div class="card">
-      <div style="display:flex;gap:8px;margin-bottom:16px">
+      ${readOnly ? '' : `<div style="display:flex;gap:8px;margin-bottom:16px">
         <input type="text" id="new-customer-input" placeholder="Add customer name…"
           style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px"/>
         <button class="btn btn-primary" onclick="addCustomer()">Add</button>
-      </div>
+      </div>`}
       <table>
-        <thead><tr><th>Customer Name</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Customer Name</th>${readOnly ? '' : '<th>Actions</th>'}</tr></thead>
         <tbody>
           ${customers.length ? customers.map(c=>`<tr>
             <td>${c}</td>
-            <td style="display:flex;gap:6px">
+            ${readOnly ? '' : `<td style="display:flex;gap:6px">
               <button class="btn btn-ghost btn-sm" onclick="editCustomer(this)" data-name="${c.replace(/"/g,'&quot;')}">Edit</button>
               <button class="btn btn-danger btn-sm" onclick="removeCustomer('${c.replace(/'/g,"\\'")}')">Remove</button>
-            </td>
-          </tr>`).join('') : '<tr><td colspan="2" class="empty-state">No customers yet</td></tr>'}
+            </td>`}
+          </tr>`).join('') : `<tr><td colspan="${readOnly?1:2}" class="empty-state">No customers yet</td></tr>`}
         </tbody>
       </table>
     </div>`;
@@ -2194,9 +2201,10 @@ async function uploadRatesCSV(input) {
 // ── Job Types ──
 function renderJobTypes() {
   const types = state.data.jobTypes;
+  const readOnly = state.user?.role === 'office_support';
   return `
     <div class="section-header"><h1>Job Types</h1>
-      <div style="display:flex;gap:8px">
+      ${readOnly ? '' : `<div style="display:flex;gap:8px">
         <button class="btn btn-primary" onclick="showAddJobTypeModal()">+ New Job Type</button>
         <button class="btn btn-teal btn-sm" onclick="seedBuiltInJobTypes()" title="Add all standard job types (Back to Stock, Kitting, Cycle Count, etc.) without overwriting any you've already customised">⟳ Sync Built-in Types</button>
         <button class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('jobtypes-template.csv',
@@ -2206,7 +2214,7 @@ function renderJobTypes() {
         <label class="btn btn-teal btn-sm" style="cursor:pointer">
           ⬆ Upload CSV <input type="file" accept=".csv" style="display:none" onchange="uploadJobTypesCSV(this)"/>
         </label>
-      </div>
+      </div>`}
     </div>
     ${types.length === 0 ? '<div class="card"><div class="empty-state">No job types yet. Add one or upload CSV.</div></div>' : ''}
     ${types.map(jt=>`
@@ -2219,10 +2227,10 @@ function renderJobTypes() {
               <div style="font-size:12px;color:var(--text-light);font-family:monospace">${jt.id}</div>
             </div>
           </div>
-          <div style="display:flex;gap:8px">
+          ${readOnly ? '' : `<div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" onclick="showEditJobTypeModal('${jt.id}')">✏️ Edit</button>
             <button class="btn btn-danger btn-sm" onclick="deleteJobType('${jt.id}')">Delete</button>
-          </div>
+          </div>`}
         </div>
         <table>
           <thead><tr><th>Field ID</th><th>Label</th><th>Type</th><th>Required</th></tr></thead>
@@ -2488,18 +2496,19 @@ async function deleteJobType(id) {
 function renderUsersTeams() {
   const users = state.data.users || [];
   const teams = state.data.teams || [];
+  const readOnly = state.user?.role === 'office_support';
   return `
     <div class="section-header"><h1>Users & Teams</h1>
-      <div style="display:flex;gap:8px">
+      ${readOnly ? '' : `<div style="display:flex;gap:8px">
         <button class="btn btn-teal" onclick="showInviteUserModal()">+ Invite User</button>
         <button class="btn btn-primary" onclick="showCreateTeamModal()">+ New Team</button>
-      </div>
+      </div>`}
     </div>
     <div class="card">
       <div class="card-title">Users (${users.length})</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Hourly Cost</th><th>Last Seen</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th>${readOnly ? '' : '<th>Hourly Cost</th>'}<th>Last Seen</th>${readOnly ? '' : '<th>Actions</th>'}</tr></thead>
           <tbody>${users.length ? users.map(u => {
             const userTeam = teams.find(t => (t.memberIds||[]).includes(u.uid));
             return `<tr>
@@ -2510,14 +2519,14 @@ function renderUsersTeams() {
               <td>${u.email}</td>
               <td><span class="badge badge-${u.role==='admin'?'great':u.role==='manager'?'assigned_manager':u.role==='office_support'?'assigned_associate':'created'}">${u.role.replace('_',' ')}</span></td>
               <td>${userTeam?.name||'<span style="color:var(--text-light)">—</span>'}</td>
-              <td>$${(u.hourlyCost||0).toFixed(2)}/hr</td>
+              ${readOnly ? '' : `<td>$${(u.hourlyCost||0).toFixed(2)}/hr</td>`}
               <td>${fmtDate(u.lastSeen)}</td>
-              <td style="display:flex;gap:6px">
+              ${readOnly ? '' : `<td style="display:flex;gap:6px">
                 <button class="btn btn-ghost btn-sm" onclick="showEditUserModal('${u.uid}')">Edit</button>
                 ${u.uid !== state.user?.uid ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.uid}')">Remove</button>` : '<span style="color:var(--text-light);font-size:12px">You</span>'}
-              </td>
+              </td>`}
             </tr>`;
-          }).join('') : '<tr><td colspan="7" class="empty-state">No users yet. Invite someone to get started.</td></tr>'}
+          }).join('') : `<tr><td colspan="${readOnly?5:7}" class="empty-state">No users yet.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -2526,7 +2535,7 @@ function renderUsersTeams() {
       <div class="card-title">Teams (${teams.length})</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Team Name</th><th>Manager</th><th>Members</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Team Name</th><th>Manager</th><th>Members</th>${readOnly ? '' : '<th>Actions</th>'}</tr></thead>
           <tbody>${teams.length ? teams.map(t => {
             const members = (t.memberIds||[]).map(id => users.find(u=>u.uid===id)).filter(Boolean);
             return `<tr>
@@ -2535,12 +2544,12 @@ function renderUsersTeams() {
               <td>
                 ${members.length ? members.map(u=>`<span style="display:inline-flex;align-items:center;gap:4px;background:#e9d8fd;color:#553c9a;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;margin:2px">${u.displayName}</span>`).join('') : '<span style="color:var(--text-light);font-size:12px">No members</span>'}
               </td>
-              <td style="display:flex;gap:6px">
+              ${readOnly ? '' : `<td style="display:flex;gap:6px">
                 <button class="btn btn-ghost btn-sm" onclick="editTeamModal('${t.id}')">Edit</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteTeam('${t.id}')">Delete</button>
-              </td>
+              </td>`}
             </tr>`;
-          }).join('') : '<tr><td colspan="4" class="empty-state">No teams yet.</td></tr>'}
+          }).join('') : `<tr><td colspan="${readOnly?3:4}" class="empty-state">No teams yet.</td></tr>`}
           </tbody>
         </table>
       </div>
