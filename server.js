@@ -10,6 +10,7 @@ const XLSX = require('xlsx');
 const helmet = require('helmet');
 const cors = require('cors');
 const path = require('path');
+const nodemailer = require('nodemailer');
 
 // ─── Firebase Admin Init ──────────────────────────────────────────────────────
 const firebaseConfig = process.env.FIREBASE_SERVICE_ACCOUNT
@@ -302,25 +303,49 @@ async function writeAudit(jobId, action, uid, name, before, after, email) {
 }
 
 // ─── Email Helper ─────────────────────────────────────────────────────────────
-// Sends Firebase's built-in password-reset / invite email via the REST API.
-// Requires FIREBASE_WEB_API_KEY env var (the web API key from Firebase Console).
-async function sendPasswordResetEmail(email) {
-  const apiKey = process.env.FIREBASE_WEB_API_KEY;
-  if (!apiKey) {
-    console.warn('[sendPasswordResetEmail] FIREBASE_WEB_API_KEY not set — skipping email send');
-    return { sent: false, reason: 'no_api_key' };
-  }
-  const url = `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
+// Sends an invite/password-set email via Gmail SMTP (nodemailer).
+// Requires SMTP_USER (Gmail address) and SMTP_PASS (Gmail App Password) env vars.
+function createMailTransport() {
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  if (!user || !pass) return null;
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass },
   });
-  const data = await resp.json();
-  if (!resp.ok) {
-    console.error('[sendPasswordResetEmail] Firebase error:', data);
-    return { sent: false, reason: data?.error?.message || 'firebase_error' };
+}
+
+async function sendInviteEmail(toEmail, resetLink, displayName) {
+  const transport = createMailTransport();
+  if (!transport) {
+    console.warn('[sendInviteEmail] SMTP_USER/SMTP_PASS not set — skipping email');
+    return { sent: false, reason: 'no_smtp_config' };
   }
+  const fromName = 'eShipper+ Warehouse';
+  const fromAddr = process.env.SMTP_USER;
+  const greeting = displayName ? `Hi ${displayName},` : 'Hi,';
+
+  await transport.sendMail({
+    from: `"${fromName}" <${fromAddr}>`,
+    to: toEmail,
+    subject: 'You have been invited to eShipper+ Warehouse Billing',
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px">
+        <h2 style="margin:0 0 16px;color:#1a1a2e">Welcome to eShipper+ Warehouse Billing</h2>
+        <p style="color:#374151">${greeting}</p>
+        <p style="color:#374151">An admin has created an account for you. Click the button below to set your password and get started.</p>
+        <div style="text-align:center;margin:32px 0">
+          <a href="${resetLink}" style="background:#4f46e5;color:#fff;padding:14px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px">
+            Set My Password
+          </a>
+        </div>
+        <p style="color:#6b7280;font-size:13px">This link expires in 1 hour. If you did not expect this invitation, you can ignore this email.</p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
+        <p style="color:#9ca3af;font-size:12px">eShipper+ Warehouse Billing System</p>
+      </div>
+    `,
+    text: `${greeting}\n\nYou have been invited to eShipper+ Warehouse Billing. Set your password here:\n${resetLink}\n\nThis link expires in 1 hour.`,
+  });
   return { sent: true };
 }
 
@@ -1247,11 +1272,11 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
           memberIds: FieldValue.arrayUnion(existingDoc.id),
         }).catch(() => {});
       }
-      // Send invite email + generate fallback link
-      const [emailResult, resetLink] = await Promise.all([
-        sendPasswordResetEmail(emailKey).catch(() => ({ sent: false })),
-        auth.generatePasswordResetLink(emailKey).catch(() => null),
-      ]);
+      // Generate password-set link then email it
+      const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
+      const emailResult = resetLink
+        ? await sendInviteEmail(emailKey, resetLink, nameToUse || displayName).catch(() => ({ sent: false }))
+        : { sent: false };
       return res.json({ status: 'updated', uid: existingDoc.id, resetLink, emailSent: emailResult.sent });
     }
 
@@ -1278,11 +1303,11 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
       invitedAt: Timestamp.now(),
     });
 
-    // Send invite email + generate fallback link in parallel
-    const [emailResult, resetLink] = await Promise.all([
-      sendPasswordResetEmail(emailKey).catch(() => ({ sent: false })),
-      auth.generatePasswordResetLink(emailKey).catch(() => null),
-    ]);
+    // Generate password-set link then email it
+    const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
+    const emailResult = resetLink
+      ? await sendInviteEmail(emailKey, resetLink, nameToUse).catch(() => ({ sent: false }))
+      : { sent: false };
 
     await writeLog({ action: 'user.invited', entity: 'user', entityId: authUser.uid,
       entityLabel: emailKey, uid: req.uid, name: req.user.displayName,
