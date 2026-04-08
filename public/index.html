@@ -143,6 +143,23 @@ tr:hover td { background: #f0f4ff; }
 @keyframes fadeInUp { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .filter-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
 .filter-row .form-group { margin-bottom: 0; min-width: 150px; }
+
+/* ── Pagination ── */
+.pagination { display:flex; align-items:center; gap:8px; margin-top:14px; justify-content:flex-end; flex-wrap:wrap; }
+.pagination .page-info { font-size:13px; color:var(--text-light); margin-right:4px; }
+
+/* ── Info / note boxes ── */
+.info-box { padding:8px 12px; border-radius:7px; font-size:13px; line-height:1.5; }
+.info-box-green  { background:#f0fff4; border:1px solid #9ae6b4; color:#276749; }
+.info-box-blue   { background:#ebf8ff; border:1px solid #bee3f8; }
+.info-box-purple { background:#faf5ff; border:1px solid #e9d8fd; }
+.info-box-grey   { background:#f7f8fc; }
+
+/* ── Activity log table — reuse global table styles ── */
+.al-table { width:100%; border-collapse:collapse; font-size:13px; }
+.al-table th { background:var(--primary); color:#fff; padding:10px 14px; text-align:left; font-weight:600; white-space:nowrap; }
+.al-table td { padding:9px 14px; border-bottom:1px solid var(--grey); vertical-align:middle; }
+.al-table tr:hover td { background:#f0f4ff; }
 .profit-bar-wrap { background: var(--grey); border-radius: 4px; height: 8px; overflow: hidden; }
 .profit-bar { height: 100%; border-radius: 4px; }
 .field-row { display:flex; gap:6px; align-items:center; margin-bottom:8px; padding:8px; background:#f7f8fc; border-radius:6px; flex-wrap:wrap; }
@@ -247,11 +264,13 @@ const firebaseAuth = getAuth(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 
 // ── State ──
+const JOBS_PER_PAGE = 50;
 const state = {
   user: null,
   token: null,
   data: { jobs: [], customers: [], jobTypes: [], rateCards: {}, targets: {}, users: [], teams: [] },
   view: null,
+  jobsPage: 0,           // current page index for All Jobs table
   offline: !navigator.onLine,
 };
 
@@ -1068,11 +1087,18 @@ function renderAnalyticsJobRows(jobs) {
 }
 
 // ── All Jobs ──
+// Stores the currently filtered jobs list so pagination can slice it
+window._filteredJobs = null;
+
 function renderAllJobs() {
+  state.jobsPage = 0;
+  window._filteredJobs = null;
   const jobs = state.data.jobs;
+  const page = state.jobsPage;
+  const pageJobs = jobs.slice(page * JOBS_PER_PAGE, (page + 1) * JOBS_PER_PAGE);
   return `
     <div class="section-header"><h1>All Jobs</h1>
-      <button class="btn btn-teal" onclick="showCreateJobModal()">+ New Job</button>
+      <button class="btn btn-teal btn-sm" onclick="showCreateJobModal()">+ New Job</button>
     </div>
     <div class="card">
       <div class="filter-row">
@@ -1094,14 +1120,16 @@ function renderAllJobs() {
         <div class="form-group"><label>Type</label>
           <select id="jf-type"><option value="">All</option>${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select>
         </div>
-        <button class="btn btn-primary" onclick="applyJobsFilter()">Filter</button>
+        <button class="btn btn-primary btn-sm" onclick="applyJobsFilter()">Filter</button>
+        <button class="btn btn-ghost btn-sm" onclick="resetJobsFilter()">Reset</button>
       </div>
       <div class="tbl-wrap">
         <table id="all-jobs-table">
           <thead><tr><th>#</th><th>Customer</th><th>Type</th><th>Status</th><th>Billable</th><th>Created</th><th>Created By</th><th>Assigned</th><th>Revenue</th><th>Rating</th><th>Actions</th></tr></thead>
-          <tbody>${renderJobRows(jobs)}</tbody>
+          <tbody>${renderJobRows(pageJobs)}</tbody>
         </table>
       </div>
+      <div id="jobs-pagination">${renderPagination(jobs.length, page, JOBS_PER_PAGE, 'jobsPagePrev()', 'jobsPageNext()')}</div>
     </div>`;
 }
 
@@ -1125,6 +1153,19 @@ function renderJobRows(jobs) {
       ${state.user.role==='admin' ? `<button class="btn btn-danger btn-sm" onclick="deleteJob('${j.id}')">Del</button>` : ''}
     </td>
   </tr>`).join('');
+}
+
+function renderPagination(total, page, perPage, onPrev, onNext) {
+  if (total <= perPage) return '';
+  const totalPages = Math.ceil(total / perPage);
+  const from = page * perPage + 1;
+  const to = Math.min((page + 1) * perPage, total);
+  return `<div class="pagination">
+    <span class="page-info">Showing ${from}–${to} of ${total}</span>
+    <button class="btn btn-ghost btn-sm" onclick="${onPrev}" ${page === 0 ? 'disabled' : ''}>‹ Prev</button>
+    <span style="font-size:13px;font-weight:600">${page + 1} / ${totalPages}</span>
+    <button class="btn btn-ghost btn-sm" onclick="${onNext}" ${page >= totalPages - 1 ? 'disabled' : ''}>Next ›</button>
+  </div>`;
 }
 
 // ── Quick Assign Modal ──
@@ -1901,7 +1942,7 @@ function renderActivityLogShell() {
   return `
     <div class="section-header"><h1>Activity Log</h1></div>
     <div class="card" style="margin-bottom:16px">
-      <div class="filter-row" style="flex-wrap:wrap;gap:10px">
+      <div class="filter-row">
         <div class="form-group" style="min-width:140px"><label>Category</label>
           <select id="al-entity" onchange="loadActivityLog()">
             <option value="">All</option>
@@ -1910,14 +1951,14 @@ function renderActivityLogShell() {
         </div>
         <div class="form-group" style="flex:1;min-width:200px"><label>Search</label>
           <input type="text" id="al-search" placeholder="Search by user, label, action…"
-            oninput="filterActivityLog()" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px"/>
+            oninput="debounceFilterActivityLog()"/>
         </div>
-        <div style="align-self:flex-end"><button class="btn btn-primary" onclick="loadActivityLog()">Refresh</button></div>
+        <div style="align-self:flex-end"><button class="btn btn-primary btn-sm" onclick="loadActivityLog()">Refresh</button></div>
       </div>
     </div>
     <div class="card" style="padding:0">
-      <div id="al-table-wrap" style="overflow-x:auto">
-        <div style="padding:24px;color:var(--text-light);text-align:center">Loading…</div>
+      <div id="al-table-wrap" class="tbl-wrap">
+        <div class="empty-state">Loading…</div>
       </div>
     </div>`;
 }
@@ -1951,6 +1992,12 @@ const ACTION_ICONS = {
   'team.created': '🏗️', 'team.deleted': '🗑️',
 };
 
+let _alSearchTimer = null;
+function debounceFilterActivityLog() {
+  clearTimeout(_alSearchTimer);
+  _alSearchTimer = setTimeout(filterActivityLog, 300);
+}
+
 function filterActivityLog() {
   const wrap = document.getElementById('al-table-wrap');
   if (!wrap) return;
@@ -1963,16 +2010,16 @@ function filterActivityLog() {
            (l.performedByEmail||'').toLowerCase().includes(q);
   });
   if (!logs.length) {
-    wrap.innerHTML = '<div style="padding:24px;color:var(--text-light);text-align:center">No log entries found</div>';
+    wrap.innerHTML = '<div class="empty-state">No log entries found</div>';
     return;
   }
+  const entityColor = { job:'var(--primary)', user:'var(--teal)', config:'var(--warning)', template:'#805ad5', team:'#d69e2e' };
   const rows = logs.map(l => {
     const ts = l.timestamp?.toDate ? l.timestamp.toDate() : new Date((l.timestamp?._seconds||0)*1000);
     const timeStr = ts.toLocaleString('en-CA', { dateStyle:'medium', timeStyle:'short' });
     const icon = ACTION_ICONS[l.action] || '📌';
     const actionLabel = (l.action||'').replace(/\./g,' › ').replace(/_/g,' ');
-    const entityBadgeColor = { job:'var(--primary)', user:'var(--teal)', config:'var(--warning)',
-      template:'#805ad5', team:'#d69e2e' }[l.entity] || '#888';
+    const badgeColor = entityColor[l.entity] || '#888';
     let metaHtml = '';
     if (l.metadata) {
       const parts = Object.entries(l.metadata)
@@ -1986,25 +2033,17 @@ function filterActivityLog() {
       if (parts.length) metaHtml += `<div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:8px">${parts.join('')}</div>`;
     }
     return `<tr>
-      <td style="white-space:nowrap;font-size:12px;color:var(--text-light)">${timeStr}</td>
-      <td><span style="background:${entityBadgeColor};color:#fff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600">${l.entity||''}</span></td>
-      <td>${icon} <span style="font-size:13px">${actionLabel}</span></td>
-      <td><div style="font-size:13px;font-weight:600">${l.entityLabel||l.entityId||'—'}</div>${metaHtml}</td>
-      <td style="white-space:nowrap;font-size:13px">${l.performedByName||'—'}<div style="font-size:11px;color:var(--text-light)">${l.performedByRole||''}</div></td>
+      <td style="white-space:nowrap">${timeStr}</td>
+      <td><span style="background:${badgeColor};color:#fff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600">${l.entity||''}</span></td>
+      <td>${icon} ${actionLabel}</td>
+      <td><div style="font-weight:600">${l.entityLabel||l.entityId||'—'}</div>${metaHtml}</td>
+      <td style="white-space:nowrap">${l.performedByName||'—'}<div style="font-size:11px;color:var(--text-light)">${l.performedByRole||''}</div></td>
     </tr>`;
   }).join('');
-  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse">
-    <thead><tr style="background:#f7f8fc">
-      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Timestamp</th>
-      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Category</th>
-      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Action</th>
-      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Details</th>
-      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Performed By</th>
-    </tr></thead>
+  wrap.innerHTML = `<table class="al-table">
+    <thead><tr><th>Timestamp</th><th>Category</th><th>Action</th><th>Details</th><th>Performed By</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
-  // Zebra stripe
-  wrap.querySelectorAll('tbody tr').forEach((r,i)=>{ r.style.background = i%2===0?'#fff':'#f9fafb'; });
 }
 
 // ── Rate Cards ──
@@ -3592,7 +3631,7 @@ function applyAnalyticsFilter() {
   if (tbody) tbody.innerHTML = renderAnalyticsJobRows(allFiltered);
 }
 
-// ── Jobs filter ──
+// ── Jobs filter + pagination ──
 function applyJobsFilter() {
   const view = document.getElementById('jf-view')?.value;
   const status = document.getElementById('jf-status')?.value;
@@ -3609,8 +3648,41 @@ function applyJobsFilter() {
   if (customer) jobs = jobs.filter(j => j.customerId === customer);
   if (type) jobs = jobs.filter(j => j.jobTypeId === type);
 
+  state.jobsPage = 0;
+  window._filteredJobs = jobs;
+  _renderJobsPage();
+}
+
+function resetJobsFilter() {
+  ['jf-view','jf-status','jf-customer','jf-type'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  state.jobsPage = 0;
+  window._filteredJobs = null;
+  _renderJobsPage();
+}
+
+function jobsPagePrev() {
+  if (state.jobsPage > 0) { state.jobsPage--; _renderJobsPage(); }
+}
+
+function jobsPageNext() {
+  const jobs = window._filteredJobs || state.data.jobs;
+  const totalPages = Math.ceil(jobs.length / JOBS_PER_PAGE);
+  if (state.jobsPage < totalPages - 1) { state.jobsPage++; _renderJobsPage(); }
+}
+
+function _renderJobsPage() {
+  const jobs = window._filteredJobs || state.data.jobs;
+  const page = state.jobsPage;
+  const pageJobs = jobs.slice(page * JOBS_PER_PAGE, (page + 1) * JOBS_PER_PAGE);
   const tbody = document.querySelector('#all-jobs-table tbody');
-  if (tbody) tbody.innerHTML = renderJobRows(jobs);
+  if (tbody) tbody.innerHTML = renderJobRows(pageJobs);
+  const pag = document.getElementById('jobs-pagination');
+  if (pag) pag.innerHTML = renderPagination(jobs.length, page, JOBS_PER_PAGE, 'jobsPagePrev()', 'jobsPageNext()');
+  // Scroll table back to top
+  document.querySelector('#all-jobs-table')?.closest('.tbl-wrap')?.scrollTo(0, 0);
 }
 
 // ── Self-log field update ──
@@ -3982,7 +4054,9 @@ Object.assign(window, {
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
   exportJobLocations, uploadLocationsToJob,
-  deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields, updateCreateJobFields,
+  deleteJob, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
+  updateSelfLogFields, updateCreateJobFields,
+  debounceFilterActivityLog,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
   updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
