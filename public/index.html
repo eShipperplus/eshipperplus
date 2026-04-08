@@ -586,7 +586,58 @@ function fmtDate(ts) {
 }
 function statusBadge(s) { return `<span class="badge badge-${s}">${s.replace(/_/g,' ')}</span>`; }
 function ratingBadge(r) { return r ? `<span class="badge badge-${r}">${r.replace(/_/g,' ')}</span>` : '—'; }
-function jobTypeName(id) { return id === 'bts' ? 'Back to Stock' : id === 'kit' ? 'Kitting' : id; }
+function jobTypeName(id) {
+  const jt = (state.data.jobTypes||[]).find(j => j.id === id);
+  return jt ? jt.name : (id === 'bts' ? 'Back to Stock' : id === 'kit' ? 'Kitting' : id);
+}
+
+const JT_COLORS = [
+  { id: 'purple', bg: '#e9d8fd', text: '#553c9a' },
+  { id: 'blue',   bg: '#bee3f8', text: '#2b6cb0' },
+  { id: 'teal',   bg: '#c6f6d5', text: '#276749' },
+  { id: 'orange', bg: '#feebc8', text: '#c05621' },
+  { id: 'pink',   bg: '#fed7e2', text: '#97266d' },
+  { id: 'red',    bg: '#fed7d7', text: '#c53030' },
+  { id: 'yellow', bg: '#fefcbf', text: '#744210' },
+  { id: 'gray',   bg: '#e2e8f0', text: '#4a5568' },
+];
+
+function jtColor(colorId) { return JT_COLORS.find(c => c.id === colorId) || JT_COLORS[0]; }
+
+function jtBadge(jobTypeId) {
+  const jt = (state.data.jobTypes||[]).find(j => j.id === jobTypeId);
+  const name = jt ? jt.name : jobTypeName(jobTypeId);
+  const c = jtColor(jt?.color || 'purple');
+  return `<span class="badge" style="background:${c.bg};color:${c.text}">${name}</span>`;
+}
+
+function renderColorPicker(selectedColor) {
+  const sel = selectedColor || 'purple';
+  return JT_COLORS.map(c => `
+    <div onclick="selectJtColor('${c.id}')" data-color="${c.id}" title="${c.id}"
+      style="width:28px;height:28px;border-radius:50%;background:${c.bg};cursor:pointer;
+             border:3px solid ${sel===c.id?c.text:'#e2e8f0'};box-sizing:border-box;
+             display:inline-flex;align-items:center;justify-content:center;
+             font-size:11px;font-weight:700;color:${c.text}">
+      ${sel===c.id?'✓':''}
+    </div>`).join('');
+}
+
+function selectJtColor(colorId) {
+  document.getElementById('jt-color').value = colorId;
+  document.querySelectorAll('#jt-color-picker [data-color]').forEach(el => {
+    const c = jtColor(el.dataset.color);
+    el.style.borderColor = el.dataset.color === colorId ? c.text : '#e2e8f0';
+    el.textContent = el.dataset.color === colorId ? '✓' : '';
+  });
+}
+
+function moveFieldRow(btn, dir) {
+  const row = btn.closest('.field-row');
+  if (!row) return;
+  if (dir === 'up' && row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
+  else if (dir === 'down' && row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row);
+}
 
 function toast(msg, dur = 2500) {
   const el = document.createElement('div');
@@ -618,12 +669,16 @@ function renderFieldInputs(fields, values = {}) {
     <div class="form-group">
       <label>${f.label}${f.required ? ' *' : ''}</label>
       ${f.type === 'select' && (f.options||[]).length
-        ? `<select name="${f.id}" ${f.required ? 'required' : ''} style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;background:#fff">
+        ? `<select name="${f.id}" ${f.required?'required':''} style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;background:#fff">
             <option value="">— Select —</option>
             ${(f.options||[]).map(o=>`<option value="${o}"${values[f.id]===o?' selected':''}>${o}</option>`).join('')}
            </select>`
-        : `<input type="${f.type === 'select' ? 'text' : (f.type || 'text')}" name="${f.id}" value="${values[f.id] || ''}"
-            placeholder="${f.label}" ${f.required ? 'required' : ''}/>` }
+        : f.type === 'textarea'
+        ? `<textarea name="${f.id}" rows="3" placeholder="${f.label}" ${f.required?'required':''}
+            style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;font-family:inherit;resize:vertical"
+          >${values[f.id]||''}</textarea>`
+        : `<input type="${f.type||'text'}" name="${f.id}" value="${values[f.id]||''}"
+            placeholder="${f.label}" ${f.required?'required':''}/>`}
     </div>
   `).join('');
 }
@@ -692,7 +747,7 @@ function renderDashboard() {
           <tbody>${open.length ? open.sort((a,b)=>ageMs(b)-ageMs(a)).map(j=>`
             <tr>
               <td>${j.customerId}</td>
-              <td>${jobTypeName(j.jobTypeId)}</td>
+              <td>${jtBadge(j.jobTypeId)}</td>
               <td>${statusBadge(j.status)}</td>
               <td>${Math.floor(ageMs(j)/3600000)}h</td>
               <td>${j.dueDate||'—'}</td>
@@ -773,7 +828,7 @@ function renderAnalytics() {
 function renderAnalyticsJobRows(jobs) {
   if (!jobs.length) return '<tr><td colspan="9" class="empty-state">No data</td></tr>';
   return jobs.map(j=>`<tr>
-    <td>${fmtDate(j.completedAt)}</td><td>${j.customerId}</td><td>${jobTypeName(j.jobTypeId)}</td>
+    <td>${fmtDate(j.completedAt)}</td><td>${j.customerId}</td><td>${jtBadge(j.jobTypeId)}</td>
     <td>${(j.assignedAssocNames||[]).join(', ')||'—'}</td>
     <td>${fmt(j.revenue)}</td><td>${fmt(j.cost)}</td><td>${fmt(j.profit)}</td>
     <td>${fmtPct(j.marginPct)}</td><td>${ratingBadge(j.rating)}</td>
@@ -816,7 +871,7 @@ function renderJobRows(jobs) {
   const canAssign = state.user.role === 'admin' || state.user.role === 'manager';
   return jobs.map(j=>`<tr>
     <td>${j.customerId}</td>
-    <td>${jobTypeName(j.jobTypeId)}</td>
+    <td>${jtBadge(j.jobTypeId)}</td>
     <td>${statusBadge(j.status)}${(j.locations||[]).length ? `<span style="font-size:11px;color:var(--text-light);margin-left:5px">${(j.locations||[]).filter(l=>l.status==='done').length}/${(j.locations||[]).length}</span>` : ''}</td>
     <td>${j.billable?'✅':'❌'}</td>
     <td>${fmtDate(j.createdAt)}</td>
@@ -944,7 +999,7 @@ function renderMyJobs() {
         <table>
           <thead><tr><th>Customer</th><th>Type</th><th>Completed</th><th>Revenue</th><th>Rating</th></tr></thead>
           <tbody>${done.length ? done.map(j=>`<tr>
-            <td>${j.customerId}</td><td>${jobTypeName(j.jobTypeId)}</td>
+            <td>${j.customerId}</td><td>${jtBadge(j.jobTypeId)}</td>
             <td>${fmtDate(j.completedAt)}</td><td>${fmt(j.revenue)}</td><td>${ratingBadge(j.rating)}</td>
           </tr>`).join('') : '<tr><td colspan="5" class="empty-state">None yet</td></tr>'}
           </tbody>
@@ -1316,9 +1371,12 @@ function renderJobTypes() {
     ${types.map(jt=>`
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-          <div>
-            <div style="font-size:16px;font-weight:700;color:var(--primary)">${jt.name}</div>
-            <div style="font-size:12px;color:var(--text-light);font-family:monospace">${jt.id}</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            ${(()=>{ const c=jtColor(jt.color||'purple'); return `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${c.bg};border:2px solid ${c.text};flex-shrink:0"></span>`; })()}
+            <div>
+              <div style="font-size:16px;font-weight:700;color:var(--primary)">${jt.name} ${jtBadge(jt.id)}</div>
+              <div style="font-size:12px;color:var(--text-light);font-family:monospace">${jt.id}</div>
+            </div>
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" onclick="showEditJobTypeModal('${jt.id}')">✏️ Edit</button>
@@ -1343,10 +1401,19 @@ function showAddJobTypeModal() {
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-group"><label>Job Type ID (no spaces, e.g. receiving)</label>
-        <input type="text" id="jt-id" placeholder="e.g. receiving"/></div>
-      <div class="form-group"><label>Display Name</label>
-        <input type="text" id="jt-name" placeholder="e.g. Receiving"/></div>
+      <div class="form-row">
+        <div class="form-group"><label>Job Type ID (no spaces)</label>
+          <input type="text" id="jt-id" placeholder="e.g. receiving"/></div>
+        <div class="form-group"><label>Display Name</label>
+          <input type="text" id="jt-name" placeholder="e.g. Receiving"/></div>
+      </div>
+      <div class="form-group">
+        <label>Badge Colour</label>
+        <input type="hidden" id="jt-color" value="purple"/>
+        <div id="jt-color-picker" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          ${renderColorPicker('purple')}
+        </div>
+      </div>
       <div style="font-weight:600;font-size:13px;margin-bottom:8px">Fields</div>
       <div id="jt-fields-list"></div>
       <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFieldRow()">+ Add Field</button>
@@ -1368,15 +1435,20 @@ function addFieldRow(fieldId='', label='', type='text', required=false, options=
     <input type="text" placeholder="field_id" value="${fieldId}" style="flex:1;min-width:90px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
     <input type="text" placeholder="Label" value="${label}" style="flex:1.5;min-width:110px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px"/>
     <select class="field-type-sel" onchange="toggleOptionsInput(this)" style="padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px">
-      <option value="text" ${type==='text'?'selected':''}>text</option>
-      <option value="number" ${type==='number'?'selected':''}>number</option>
-      <option value="select" ${type==='select'?'selected':''}>dropdown</option>
+      <option value="text"     ${type==='text'    ?'selected':''}>text</option>
+      <option value="number"   ${type==='number'  ?'selected':''}>number</option>
+      <option value="textarea" ${type==='textarea'?'selected':''}>textarea</option>
+      <option value="select"   ${type==='select'  ?'selected':''}>dropdown</option>
     </select>
     <input type="text" class="field-options-input" placeholder="Option 1, Option 2, …" value="${options}"
       style="flex:2;min-width:150px;padding:7px;border:1px solid var(--border);border-radius:5px;font-size:13px;display:${type==='select'?'block':'none'}"/>
     <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap">
       <input type="checkbox" ${required?'checked':''}/> Required
     </label>
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <button onclick="moveFieldRow(this,'up')"   title="Move up"   style="background:#a0aec0;color:#fff;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;line-height:1.4">▲</button>
+      <button onclick="moveFieldRow(this,'down')" title="Move down" style="background:#a0aec0;color:#fff;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;line-height:1.4">▼</button>
+    </div>
     <button onclick="this.parentElement.remove()" style="background:var(--danger);color:#fff;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px">✕</button>`;
   list.appendChild(row);
 }
@@ -1391,8 +1463,9 @@ async function submitNewJobType() {
   const name = document.getElementById('jt-name')?.value.trim();
   if (!id || !name) { toast('ID and name required'); return; }
   if (state.data.jobTypes.find(t=>t.id===id)) { toast('Job type ID already exists'); return; }
+  const color = document.getElementById('jt-color')?.value || 'purple';
   const fields = collectFieldRows();
-  const newType = { id, name, fields };
+  const newType = { id, name, color, fields };
   const newTypes = [...state.data.jobTypes, newType];
   try {
     await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
@@ -1413,6 +1486,13 @@ function showEditJobTypeModal(id) {
     <div class="modal-body">
       <div class="form-group"><label>Display Name</label>
         <input type="text" id="jt-edit-name" value="${jt.name}"/></div>
+      <div class="form-group">
+        <label>Badge Colour</label>
+        <input type="hidden" id="jt-color" value="${jt.color||'purple'}"/>
+        <div id="jt-color-picker" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          ${renderColorPicker(jt.color||'purple')}
+        </div>
+      </div>
       <div style="font-weight:600;font-size:13px;margin-bottom:8px">Fields</div>
       <div id="jt-fields-list"></div>
       <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFieldRow()">+ Add Field</button>
@@ -1427,8 +1507,9 @@ function showEditJobTypeModal(id) {
 async function submitEditJobType(id) {
   const name = document.getElementById('jt-edit-name')?.value.trim();
   if (!name) { toast('Name required'); return; }
+  const color = document.getElementById('jt-color')?.value || 'purple';
   const fields = collectFieldRows();
-  const newTypes = state.data.jobTypes.map(t => t.id===id ? { ...t, name, fields } : t);
+  const newTypes = state.data.jobTypes.map(t => t.id===id ? { ...t, name, color, fields } : t);
   try {
     await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
     state.data.jobTypes = newTypes;
@@ -2840,7 +2921,7 @@ Object.assign(window, {
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
   uploadCustomersCSV, addCustomer, removeCustomer,
   uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
-  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, toggleOptionsInput, submitNewJobType, submitEditJobType,
+  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, toggleOptionsInput, moveFieldRow, selectJtColor, submitNewJobType, submitEditJobType,
   showInviteUserModal, submitInviteUser, assignUserTeam,
   showEditUserModal, submitEditUser, getPasswordResetLink,
   editCustomer, saveCustomerEdit,
