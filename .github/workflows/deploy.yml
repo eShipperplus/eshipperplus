@@ -22,7 +22,8 @@ jobs:
         run: |
           gcloud builds submit \
             --config cloudbuild.yaml \
-            --project ${{ secrets.GCP_PROJECT_ID }}
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --suppress-logs
 
       - name: Deploy Firestore indexes
         env:
