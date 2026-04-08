@@ -1360,12 +1360,13 @@ function renderCreateJob() {
           </div>
           <div class="form-group">
             <label>Job Type *</label>
-            <select name="jobTypeId" required>
+            <select name="jobTypeId" required onchange="updateCreateJobFields(this.value)">
               <option value="">Select type…</option>
               ${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
             </select>
           </div>
         </div>
+        <div id="cj-job-fields"></div>
         <div class="form-group">
           <label>Assign to Manager</label>
           <select name="assignedManagerId">
@@ -2842,10 +2843,45 @@ async function uploadLocationsToJob(jobId, input) {
   } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
-// ── Create job (office support) ──
+// ── Create job — dynamic job type fields ──
+function updateCreateJobFields(jobTypeId) {
+  const container = document.getElementById('cj-job-fields');
+  if (!container) return;
+  if (!jobTypeId) { container.innerHTML = ''; return; }
+  const fields = getJobFields(jobTypeId);
+  if (!fields || !fields.length) { container.innerHTML = ''; return; }
+  container.innerHTML = `
+    <div style="border-top:1px solid var(--border);margin:8px 0 12px;padding-top:14px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:10px;color:var(--primary)">Job Fields</div>
+      ${renderFieldInputs(fields)}
+    </div>`;
+  wireConditionalFields(container);
+}
+
+// ── Create job ──
 async function submitCreateJob(e) {
   e.preventDefault();
   const form = e.target;
+  const jobTypeId = form.jobTypeId.value;
+  const customerId = form.customerId.value;
+  if (!jobTypeId || !customerId) { toast('Select customer and job type'); return; }
+
+  // Validate required job type fields
+  const fields = getJobFields(jobTypeId);
+  const fieldsContainer = document.getElementById('cj-job-fields');
+  for (const f of fields.filter(f => f.required)) {
+    const grp = fieldsContainer?.querySelector(`[data-field-id="${f.id}"]`);
+    if (grp && grp.style.display === 'none') continue; // hidden by condition
+    const el = fieldsContainer?.querySelector(`[name="${f.id}"]`);
+    if (!el || !el.value.trim()) {
+      toast(`"${f.label}" is required`);
+      el?.focus();
+      return;
+    }
+  }
+
+  const fieldVals = fieldsContainer ? collectFields(fieldsContainer, fields) : {};
+
   const locationRows = [...document.querySelectorAll('#cj-locations-list .loc-row')];
   const locations = locationRows.map((row, i) => {
     if (row.dataset.locJson) {
@@ -2856,9 +2892,11 @@ async function submitCreateJob(e) {
     const instructions = row.querySelector('.loc-instr')?.value.trim() || '';
     return { id: 'loc_' + Date.now() + '_' + i, name, instructions, referenceData: {} };
   }).filter(l => l.name);
+
   const body = {
-    jobTypeId: form.jobTypeId.value,
-    customerId: form.customerId.value,
+    jobTypeId,
+    customerId,
+    fields: fieldVals,
     assignedManagerId: form.assignedManagerId.value || null,
     billable: form.billable.checked,
     dueDate: form.dueDate.value || null,
@@ -2871,7 +2909,6 @@ async function submitCreateJob(e) {
       type: 'text',
     })),
   };
-  if (!body.jobTypeId || !body.customerId) { toast('Select customer and job type'); return; }
   try {
     await apiFetch('/api/jobs', { method: 'POST', body: JSON.stringify(body) });
     toast('Job created');
@@ -3945,7 +3982,7 @@ Object.assign(window, {
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
   exportJobLocations, uploadLocationsToJob,
-  deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields,
+  deleteJob, applyAnalyticsFilter, applyJobsFilter, updateSelfLogFields, updateCreateJobFields,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
   updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
