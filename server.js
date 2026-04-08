@@ -1477,16 +1477,17 @@ app.delete('/api/templates/:id', requireAuth, requireRole('manager', 'admin'), a
 app.get('/api/logs', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
   try {
     const { entity, limit = 200 } = req.query;
-    let query = db.collection('wh_logs').orderBy('timestamp', 'desc');
-    // Managers only see job-related logs
-    if (req.user.role === 'manager') {
-      query = query.where('entity', '==', 'job');
-    } else if (entity) {
-      query = query.where('entity', '==', entity);
-    }
-    query = query.limit(parseInt(limit) || 200);
-    const snap = await query.get();
-    res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    // Fetch ordered by timestamp only (single-field index, always exists)
+    // then filter by entity in memory — avoids composite index requirement
+    const snap = await db.collection('wh_logs')
+      .orderBy('timestamp', 'desc')
+      .limit(500)
+      .get();
+    let logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Apply entity filter in memory
+    const entityFilter = req.user.role === 'manager' ? 'job' : (entity || null);
+    if (entityFilter) logs = logs.filter(l => l.entity === entityFilter);
+    res.json(logs.slice(0, parseInt(limit) || 200));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

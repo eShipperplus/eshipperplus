@@ -67,6 +67,13 @@ jobs:
             --collection-group=wh_audit \
             --field-config=field-path=jobId,order=ascending \
             --field-config=field-path=timestamp,order=descending
+          deploy_index \
+            --collection-group=wh_logs \
+            --field-config=field-path=entity,order=ascending \
+            --field-config=field-path=timestamp,order=descending
+          deploy_index \
+            --collection-group=wh_logs \
+            --field-config=field-path=timestamp,order=descending
 
       - name: Write env vars file and update Cloud Run
         env:
