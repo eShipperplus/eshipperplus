@@ -36,5 +36,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git pull --rebase origin main
           git add daily_history.csv 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "chore: update daily_history.csv [skip ci]"
+          git diff --cached --quiet || git commit -m "chore: update daily_history.csv [skip ci] [no ci]"
           git push || true

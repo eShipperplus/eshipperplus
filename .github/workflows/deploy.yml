@@ -2,6 +2,12 @@ name: Deploy to Cloud Run
 on:
   push:
     branches: [main]
+    paths:
+      - 'server.js'
+      - 'public/**'
+      - 'package*.json'
+      - 'Dockerfile'
+      - 'cloudbuild.yaml'
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -16,24 +22,7 @@ jobs:
         run: |
           gcloud builds submit \
             --config cloudbuild.yaml \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --suppress-logs \
-            --async
-
-      - name: Wait for Cloud Build to finish
-        run: |
-          for i in $(seq 1 30); do
-            STATUS=$(gcloud builds list \
-              --project ${{ secrets.GCP_PROJECT_ID }} \
-              --limit=1 \
-              --format="value(status)" 2>/dev/null || echo "UNKNOWN")
-            echo "Build status: $STATUS"
-            if [ "$STATUS" = "SUCCESS" ]; then break; fi
-            if [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "CANCELLED" ]; then
-              echo "Build failed: $STATUS"; exit 1
-            fi
-            sleep 20
-          done
+            --project ${{ secrets.GCP_PROJECT_ID }}
 
       - name: Deploy Firestore indexes
         env:
