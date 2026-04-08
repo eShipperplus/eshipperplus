@@ -318,35 +318,42 @@ function createMailTransport() {
 async function sendInviteEmail(toEmail, resetLink, displayName) {
   const transport = createMailTransport();
   if (!transport) {
-    console.warn('[sendInviteEmail] SMTP_USER/SMTP_PASS not set — skipping email');
+    console.error('[sendInviteEmail] SMTP_USER/SMTP_PASS not configured — cannot send email');
     return { sent: false, reason: 'no_smtp_config' };
   }
+  console.log(`[sendInviteEmail] Sending invite to ${toEmail} via ${process.env.SMTP_USER}`);
   const fromName = 'eShipper+ Warehouse';
   const fromAddr = process.env.SMTP_USER;
   const greeting = displayName ? `Hi ${displayName},` : 'Hi,';
 
-  await transport.sendMail({
-    from: `"${fromName}" <${fromAddr}>`,
-    to: toEmail,
-    subject: 'You have been invited to eShipper+ Warehouse Billing',
-    html: `
-      <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px">
-        <h2 style="margin:0 0 16px;color:#1a1a2e">Welcome to eShipper+ Warehouse Billing</h2>
-        <p style="color:#374151">${greeting}</p>
-        <p style="color:#374151">An admin has created an account for you. Click the button below to set your password and get started.</p>
-        <div style="text-align:center;margin:32px 0">
-          <a href="${resetLink}" style="background:#4f46e5;color:#fff;padding:14px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px">
-            Set My Password
-          </a>
+  try {
+    await transport.sendMail({
+      from: `"${fromName}" <${fromAddr}>`,
+      to: toEmail,
+      subject: 'You have been invited to eShipper+ Warehouse Billing',
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px">
+          <h2 style="margin:0 0 16px;color:#1a1a2e">Welcome to eShipper+ Warehouse Billing</h2>
+          <p style="color:#374151">${greeting}</p>
+          <p style="color:#374151">An admin has created an account for you. Click the button below to set your password and get started.</p>
+          <div style="text-align:center;margin:32px 0">
+            <a href="${resetLink}" style="background:#4f46e5;color:#fff;padding:14px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px">
+              Set My Password
+            </a>
+          </div>
+          <p style="color:#6b7280;font-size:13px">This link expires in 1 hour. If you did not expect this invitation, you can ignore this email.</p>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
+          <p style="color:#9ca3af;font-size:12px">eShipper+ Warehouse Billing System</p>
         </div>
-        <p style="color:#6b7280;font-size:13px">This link expires in 1 hour. If you did not expect this invitation, you can ignore this email.</p>
-        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
-        <p style="color:#9ca3af;font-size:12px">eShipper+ Warehouse Billing System</p>
-      </div>
-    `,
-    text: `${greeting}\n\nYou have been invited to eShipper+ Warehouse Billing. Set your password here:\n${resetLink}\n\nThis link expires in 1 hour.`,
-  });
-  return { sent: true };
+      `,
+      text: `${greeting}\n\nYou have been invited to eShipper+ Warehouse Billing. Set your password here:\n${resetLink}\n\nThis link expires in 1 hour.`,
+    });
+    console.log(`[sendInviteEmail] Successfully sent invite to ${toEmail}`);
+    return { sent: true };
+  } catch (err) {
+    console.error(`[sendInviteEmail] SMTP error sending to ${toEmail}:`, err.message);
+    return { sent: false, reason: err.message };
+  }
 }
 
 // ─── Universal Transaction Log ────────────────────────────────────────────────
@@ -1273,11 +1280,12 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
         }).catch(() => {});
       }
       // Generate password-set link then email it
-      const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
+      const resetLink = await auth.generatePasswordResetLink(emailKey).catch(e => { console.error('resetLink error:', e.message); return null; });
       const emailResult = resetLink
-        ? await sendInviteEmail(emailKey, resetLink, nameToUse || displayName).catch(() => ({ sent: false }))
-        : { sent: false };
-      return res.json({ status: 'updated', uid: existingDoc.id, resetLink, emailSent: emailResult.sent });
+        ? await sendInviteEmail(emailKey, resetLink, nameToUse || displayName)
+        : { sent: false, reason: 'no_reset_link' };
+      console.log('[invite/update] emailResult:', emailResult);
+      return res.json({ status: 'updated', uid: existingDoc.id, resetLink, emailSent: emailResult.sent, emailError: emailResult.reason || null });
     }
 
     // Create Firebase Auth account if it doesn't exist yet
@@ -1304,16 +1312,17 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
     });
 
     // Generate password-set link then email it
-    const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
+    const resetLink = await auth.generatePasswordResetLink(emailKey).catch(e => { console.error('resetLink error:', e.message); return null; });
     const emailResult = resetLink
-      ? await sendInviteEmail(emailKey, resetLink, nameToUse).catch(() => ({ sent: false }))
-      : { sent: false };
+      ? await sendInviteEmail(emailKey, resetLink, nameToUse)
+      : { sent: false, reason: 'no_reset_link' };
+    console.log('[invite/new] emailResult:', emailResult);
 
     await writeLog({ action: 'user.invited', entity: 'user', entityId: authUser.uid,
       entityLabel: emailKey, uid: req.uid, name: req.user.displayName,
       email: req.user.email, role: req.user.role,
-      metadata: { invitedRole: claimRole, displayName: nameToUse, emailSent: emailResult.sent } });
-    res.json({ status: 'invited', email: emailKey, uid: authUser.uid, resetLink, emailSent: emailResult.sent });
+      metadata: { invitedRole: claimRole, displayName: nameToUse, emailSent: emailResult.sent, emailError: emailResult.reason || null } });
+    res.json({ status: 'invited', email: emailKey, uid: authUser.uid, resetLink, emailSent: emailResult.sent, emailError: emailResult.reason || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
