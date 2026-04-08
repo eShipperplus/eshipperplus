@@ -13,6 +13,5 @@ steps:
       - --region=northamerica-northeast2
       - --platform=managed
       - --allow-unauthenticated
-      - --set-env-vars=GCP_PROJECT=$PROJECT_ID
 images:
   - 'northamerica-northeast2-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing'

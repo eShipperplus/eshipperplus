@@ -444,13 +444,36 @@ onAuthStateChanged(firebaseAuth, async (fbUser) => {
       }
     }, 50 * 60 * 1000);
 
-    // Auto-refresh data every 30 seconds so assigned jobs appear without manual refresh
+    // Auto-refresh data every 60 seconds so assigned jobs appear without manual refresh.
+    // Only re-renders the view when the user is NOT actively interacting — open modals,
+    // focused inputs, and form views (create-job) are all protected from interruption.
+    let _pendingRefresh = false;
     setInterval(async () => {
-      if (!document.hidden) { // Only refresh when tab/app is visible
-        await loadData();
+      if (document.hidden) return;
+      await loadData();
+      const hasModal   = !!document.querySelector('.modal-overlay');
+      const activeTag  = document.activeElement?.tagName || '';
+      const isTyping   = ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag);
+      const isFormView = state.view === 'create-job';
+      if (hasModal || isTyping || isFormView) {
+        _pendingRefresh = true; // re-render once the user finishes
+      } else {
+        _pendingRefresh = false;
         renderView();
       }
-    }, 30 * 1000);
+    }, 60 * 1000);
+
+    // Flush a pending background refresh the moment a modal closes or focus leaves an input
+    document.addEventListener('focusout', () => {
+      if (!_pendingRefresh) return;
+      const activeTag = document.activeElement?.tagName || '';
+      const stillTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag);
+      const hasModal = !!document.querySelector('.modal-overlay');
+      if (!stillTyping && !hasModal && state.view !== 'create-job') {
+        _pendingRefresh = false;
+        renderView();
+      }
+    });
 
   } else {
     state.user = null;
@@ -463,10 +486,17 @@ async function manualRefresh() {
   const btn = document.getElementById('refresh-btn');
   if (btn) { btn.style.transform = 'rotate(360deg)'; btn.style.transition = 'transform 0.5s'; }
   await loadData();
-  renderNav();
-  renderView();
   setTimeout(() => { if (btn) { btn.style.transform = ''; btn.style.transition = ''; } }, 500);
-  toast('Refreshed', 1500);
+  // If a modal is open or the user is in a form, only refresh data silently — don't blow up their work
+  const hasModal   = !!document.querySelector('.modal-overlay');
+  const isFormView = state.view === 'create-job';
+  if (hasModal || isFormView) {
+    toast('Data refreshed in background', 1500);
+  } else {
+    renderNav();
+    renderView();
+    toast('Refreshed', 1500);
+  }
 }
 
 // ── Data Load ──
@@ -1354,6 +1384,60 @@ function renderCreateJob() {
 }
 
 // ── Templates ──
+// ── Template customer helpers ──────────────────────────────────────────────────
+// Normalise old single-string customerId and new customerIds array to one format
+function tplCustomerIds(tpl) {
+  if (Array.isArray(tpl.customerIds)) return tpl.customerIds;
+  if (tpl.customerId) return [tpl.customerId];
+  return [];
+}
+function customerIdsLabel(tpl) {
+  const ids = tplCustomerIds(tpl);
+  if (!ids.length) return '🏢 All Customers';
+  if (ids.length === 1) return ids[0];
+  if (ids.length === 2) return ids.join(', ');
+  return `${ids[0]} +${ids.length - 1} more`;
+}
+// Builds a checkbox-based multi-customer picker
+function buildCustomerPickerHtml(pickerId, selectedIds) {
+  const customers = state.data.customers || [];
+  const allSelected = !selectedIds || selectedIds.length === 0;
+  return `
+    <div style="border:1px solid var(--border);border-radius:7px;overflow:hidden">
+      <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f7f8fc;cursor:pointer;border-bottom:1px solid var(--border)">
+        <input type="checkbox" id="${pickerId}-all" ${allSelected ? 'checked' : ''}
+          onchange="toggleAllCustomers('${pickerId}')"/>
+        <strong style="font-size:13px">All Customers</strong>
+      </label>
+      <div id="${pickerId}-list" style="max-height:160px;overflow-y:auto;padding:6px 12px;display:flex;flex-direction:column;gap:4px${allSelected ? ';opacity:0.45;pointer-events:none' : ''}">
+        ${customers.map(c => `
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:2px 0">
+            <input type="checkbox" name="${pickerId}-item" value="${c}"
+              ${(allSelected || (Array.isArray(selectedIds) && selectedIds.includes(c))) ? 'checked' : ''}/>
+            ${c}
+          </label>`).join('')}
+      </div>
+    </div>`;
+}
+function toggleAllCustomers(pickerId) {
+  const allCb = document.getElementById(`${pickerId}-all`);
+  const listDiv = document.getElementById(`${pickerId}-list`);
+  const itemCbs = listDiv?.querySelectorAll('input[type="checkbox"]') || [];
+  if (allCb?.checked) {
+    if (listDiv) { listDiv.style.opacity = '0.45'; listDiv.style.pointerEvents = 'none'; }
+    itemCbs.forEach(cb => cb.checked = true);
+  } else {
+    if (listDiv) { listDiv.style.opacity = '1'; listDiv.style.pointerEvents = ''; }
+    itemCbs.forEach(cb => cb.checked = false);
+  }
+}
+function getCustomerPickerValue(pickerId) {
+  const allCb = document.getElementById(`${pickerId}-all`);
+  if (allCb?.checked) return []; // empty = all customers
+  const listDiv = document.getElementById(`${pickerId}-list`);
+  return [...(listDiv?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(cb => cb.value);
+}
+
 function renderTemplates() {
   const templates = state.data.templates || [];
   const canEdit = state.user.role === 'admin' || state.user.role === 'manager';
@@ -1384,7 +1468,7 @@ function renderTemplates() {
               <div style="font-weight:700;font-size:15px;margin-bottom:4px">${t.name}</div>
               <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
                 ${jtBadge(t.jobTypeId)}
-                <span style="font-size:12px;color:var(--text-light)">${t.customerId}</span>
+                <span style="font-size:12px;color:var(--text-light)">${customerIdsLabel(t)}</span>
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
@@ -1438,7 +1522,7 @@ function renderTemplatePickerItems(templates) {
           <div style="font-weight:600;font-size:14px;margin-bottom:3px">${t.name}</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
             ${jtBadge(t.jobTypeId)}
-            <span style="font-size:12px;color:var(--text-light)">${t.customerId}${locCount ? ` · ${locCount} loc` : ''}${dueLabel}</span>
+            <span style="font-size:12px;color:var(--text-light)">${customerIdsLabel(t)}${locCount ? ` · ${locCount} loc` : ''}${dueLabel}</span>
           </div>
         </div>
         <button class="btn btn-primary btn-sm">Use</button>
@@ -1452,7 +1536,7 @@ function filterTemplateList(query) {
   const templates = state.data.templates || [];
   const filtered = q ? templates.filter(t =>
     t.name.toLowerCase().includes(q) ||
-    t.customerId.toLowerCase().includes(q) ||
+    tplCustomerIds(t).some(c => c.toLowerCase().includes(q)) ||
     t.jobTypeId.toLowerCase().includes(q)
   ) : templates;
   const list = document.getElementById('tpl-picker-list');
@@ -1462,17 +1546,41 @@ function filterTemplateList(query) {
 function applyTemplate(tplId) {
   const tpl = (state.data.templates||[]).find(t => t.id === tplId);
   if (!tpl) return;
-  // Navigate to create-job if not already there
+  const ids = tplCustomerIds(tpl);
+  // Multiple specific customers → ask which one to use for this job
+  if (ids.length > 1) {
+    document.querySelector('.modal-overlay')?.remove();
+    showModal(`
+      <div class="modal-header"><h2>Select Customer</h2>
+        <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom:14px;color:var(--text-light);font-size:13px">This template supports multiple customers. Which customer is this job for?</p>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${ids.map(c => `
+            <button class="btn btn-ghost" style="text-align:left;justify-content:flex-start;padding:10px 14px"
+              onclick="document.querySelector('.modal-overlay')?.remove();_applyTemplateWithCustomer('${tplId}','${c.replace(/'/g, "\\'")}')">
+              🏢 ${c}
+            </button>`).join('')}
+        </div>
+      </div>`);
+    return;
+  }
+  _applyTemplateWithCustomer(tplId, ids.length === 1 ? ids[0] : null);
+}
+
+function _applyTemplateWithCustomer(tplId, customerId) {
+  const tpl = (state.data.templates||[]).find(t => t.id === tplId);
+  if (!tpl) return;
+  document.querySelector('.modal-overlay')?.remove();
   if (state.view !== 'create-job') {
     state.view = 'create-job';
     renderNav();
     renderView();
-    // Wait for DOM, then apply
-    setTimeout(() => _fillTemplateIntoForm(tpl), 50);
+    setTimeout(() => _fillTemplateIntoForm(tpl, customerId), 50);
   } else {
-    _fillTemplateIntoForm(tpl);
+    _fillTemplateIntoForm(tpl, customerId);
   }
-  document.querySelector('.modal-overlay')?.remove();
   toast(`Template "${tpl.name}" loaded`);
 }
 
@@ -1480,12 +1588,16 @@ function useTemplate(tplId) {
   applyTemplate(tplId);
 }
 
-function _fillTemplateIntoForm(tpl) {
+function _fillTemplateIntoForm(tpl, customerOverride) {
   const form = document.getElementById('create-job-form');
   if (!form) return;
-  // Customer
+  // Customer — use override (chosen from picker) or single stored customer; skip if all-customers template
   const custSel = form.querySelector('[name="customerId"]');
-  if (custSel) custSel.value = tpl.customerId || '';
+  if (custSel) {
+    const ids = tplCustomerIds(tpl);
+    const customerToSet = customerOverride || (ids.length === 1 ? ids[0] : null);
+    if (customerToSet) custSel.value = customerToSet;
+  }
   // Job type
   const jtSel = form.querySelector('[name="jobTypeId"]');
   if (jtSel) {
@@ -1601,12 +1713,13 @@ async function submitSaveTemplate() {
   }).filter(l => l.name);
   const csvCaptureFields = (window._csvCaptureCols || []).map(n => ({ id: n.toLowerCase().replace(/\s+/g,'_'), label: n, type: 'text' }));
   try {
+    const customerIds = customerId ? [customerId] : [];
     const result = await apiFetch('/api/templates', { method: 'POST', body: JSON.stringify({
-      name, jobTypeId, customerId, assignedManagerId, billable,
+      name, jobTypeId, customerIds, assignedManagerId, billable,
       dueDaysOffset, instructions, notes, locations, csvCaptureFields,
     })});
     // Add to local state
-    state.data.templates.unshift({ id: result.id, name, jobTypeId, customerId, assignedManagerId, billable, dueDaysOffset, instructions, notes, locations, csvCaptureFields });
+    state.data.templates.unshift({ id: result.id, name, jobTypeId, customerIds, assignedManagerId, billable, dueDaysOffset, instructions, notes, locations, csvCaptureFields });
     document.querySelector('.modal-overlay')?.remove();
     toast(`✅ Template "${name}" saved`);
   } catch (err) { toast('Error: ' + err.message, 3000); }
@@ -1626,15 +1739,13 @@ async function showEditTemplateModal(tplId) {
       <div class="form-group"><label>Template Name *</label>
         <input type="text" id="etpl-name" value="${tpl.name.replace(/"/g,'&quot;')}"
           style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px"/></div>
-      <div class="form-row">
-        <div class="form-group"><label>Customer *</label>
-          <select id="etpl-customer">
-            ${state.data.customers.map(c=>`<option ${c===tpl.customerId?'selected':''}>${c}</option>`).join('')}
-          </select></div>
-        <div class="form-group"><label>Job Type *</label>
-          <select id="etpl-jobtype">
-            ${state.data.jobTypes.map(t=>`<option value="${t.id}" ${t.id===tpl.jobTypeId?'selected':''}>${t.name}</option>`).join('')}
-          </select></div>
+      <div class="form-group"><label>Job Type *</label>
+        <select id="etpl-jobtype" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px">
+          ${state.data.jobTypes.map(t=>`<option value="${t.id}" ${t.id===tpl.jobTypeId?'selected':''}>${t.name}</option>`).join('')}
+        </select></div>
+      <div class="form-group">
+        <label>Customer(s) <span style="font-weight:400;color:var(--text-light)">— leave "All Customers" for any customer</span></label>
+        ${buildCustomerPickerHtml('etpl-cpicker', tplCustomerIds(tpl))}
       </div>
       ${managers.length ? `
       <div class="form-group"><label>Default Manager</label>
@@ -1666,14 +1777,14 @@ async function submitEditTemplate(tplId) {
   const name = document.getElementById('etpl-name')?.value.trim();
   if (!name) { toast('Template name required'); return; }
   const jobTypeId = document.getElementById('etpl-jobtype')?.value;
-  const customerId = document.getElementById('etpl-customer')?.value;
+  const customerIds = getCustomerPickerValue('etpl-cpicker');
   const assignedManagerId = document.getElementById('etpl-manager')?.value || null;
   const billable = document.getElementById('etpl-billable')?.checked ?? true;
   const instructions = document.getElementById('etpl-instr')?.value || '';
   const notes = document.getElementById('etpl-notes')?.value || '';
   const dueDaysRaw = document.getElementById('etpl-due')?.value;
   const dueDaysOffset = dueDaysRaw !== '' && dueDaysRaw != null ? parseInt(dueDaysRaw) : null;
-  const updates = { name, jobTypeId, customerId, assignedManagerId, billable, dueDaysOffset,
+  const updates = { name, jobTypeId, customerIds, assignedManagerId, billable, dueDaysOffset,
                     instructions, notes, locations: tpl?.locations || [], csvCaptureFields: tpl?.csvCaptureFields || [] };
   try {
     await apiFetch(`/api/templates/${tplId}`, { method: 'PUT', body: JSON.stringify(updates) });
@@ -1696,17 +1807,14 @@ function showCreateTemplateModal() {
       <div class="form-group"><label>Template Name *</label>
         <input type="text" id="ctpl-name" placeholder="e.g. Weekly BTS - Amazon"
           style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px"/></div>
-      <div class="form-row">
-        <div class="form-group"><label>Customer *</label>
-          <select id="ctpl-customer">
-            <option value="">Select customer…</option>
-            ${state.data.customers.map(c=>`<option>${c}</option>`).join('')}
-          </select></div>
-        <div class="form-group"><label>Job Type *</label>
-          <select id="ctpl-jobtype">
-            <option value="">Select type…</option>
-            ${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
-          </select></div>
+      <div class="form-group"><label>Job Type *</label>
+        <select id="ctpl-jobtype" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px">
+          <option value="">Select type…</option>
+          ${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
+        </select></div>
+      <div class="form-group">
+        <label>Customer(s) <span style="font-weight:400;color:var(--text-light)">— leave "All Customers" for any customer</span></label>
+        ${buildCustomerPickerHtml('ctpl-cpicker', [])}
       </div>
       ${managers.length ? `
       <div class="form-group"><label>Default Manager</label>
@@ -1737,8 +1845,8 @@ function showCreateTemplateModal() {
 async function submitCreateTemplate() {
   const name = document.getElementById('ctpl-name')?.value.trim();
   const jobTypeId = document.getElementById('ctpl-jobtype')?.value;
-  const customerId = document.getElementById('ctpl-customer')?.value;
-  if (!name || !jobTypeId || !customerId) { toast('Name, customer, and job type required'); return; }
+  if (!name || !jobTypeId) { toast('Name and job type required'); return; }
+  const customerIds = getCustomerPickerValue('ctpl-cpicker');
   const assignedManagerId = document.getElementById('ctpl-manager')?.value || null;
   const billable = document.getElementById('ctpl-billable')?.checked ?? true;
   const instructions = document.getElementById('ctpl-instr')?.value || '';
@@ -1747,9 +1855,9 @@ async function submitCreateTemplate() {
   const dueDaysOffset = dueDaysRaw !== '' && dueDaysRaw != null ? parseInt(dueDaysRaw) : null;
   try {
     const result = await apiFetch('/api/templates', { method: 'POST', body: JSON.stringify({
-      name, jobTypeId, customerId, assignedManagerId, billable, dueDaysOffset, instructions, notes, locations: [], csvCaptureFields: [],
+      name, jobTypeId, customerIds, assignedManagerId, billable, dueDaysOffset, instructions, notes, locations: [], csvCaptureFields: [],
     })});
-    state.data.templates.unshift({ id: result.id, name, jobTypeId, customerId, assignedManagerId, billable, dueDaysOffset, instructions, notes, locations: [], csvCaptureFields: [] });
+    state.data.templates.unshift({ id: result.id, name, jobTypeId, customerIds, assignedManagerId, billable, dueDaysOffset, instructions, notes, locations: [], csvCaptureFields: [] });
     document.querySelector('.modal-overlay')?.remove();
     toast(`✅ Template "${name}" created`);
     renderView();
@@ -3645,7 +3753,8 @@ Object.assign(window, {
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
   showQuickAssignModal, submitQuickAssign,
-  openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate,
+  openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
+  toggleAllCustomers, getCustomerPickerValue,
   openSaveTemplateModal, submitSaveTemplate,
   showCreateTemplateModal, submitCreateTemplate,
   showEditTemplateModal, submitEditTemplate,

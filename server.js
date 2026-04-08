@@ -1295,12 +1295,15 @@ app.get('/api/templates', requireAuth, requireRole('manager', 'admin'), async (r
 
 app.post('/api/templates', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
   try {
-    const { name, jobTypeId, customerId, assignedManagerId, billable,
+    const { name, jobTypeId, customerId, customerIds, assignedManagerId, billable,
             dueDaysOffset, instructions, notes, locations, csvCaptureFields } = req.body;
-    if (!name || !jobTypeId || !customerId) return res.status(400).json({ error: 'name, jobTypeId, customerId required' });
+    if (!name || !jobTypeId) return res.status(400).json({ error: 'name and jobTypeId required' });
+    // Normalise to customerIds array (empty = all customers)
+    let resolvedCustomerIds = Array.isArray(customerIds) ? customerIds
+      : (customerId ? [customerId] : []);
     const now = Timestamp.now();
     const ref = await db.collection('wh_templates').add({
-      name, jobTypeId, customerId,
+      name, jobTypeId, customerIds: resolvedCustomerIds,
       assignedManagerId: assignedManagerId || null,
       billable: billable ?? true,
       dueDaysOffset: dueDaysOffset ?? null,
@@ -1319,10 +1322,13 @@ app.post('/api/templates', requireAuth, requireRole('manager', 'admin'), async (
 
 app.put('/api/templates/:id', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
   try {
-    const { name, jobTypeId, customerId, assignedManagerId, billable,
+    const { name, jobTypeId, customerId, customerIds, assignedManagerId, billable,
             dueDaysOffset, instructions, notes, locations, csvCaptureFields } = req.body;
+    // Normalise to customerIds array (empty = all customers)
+    let resolvedCustomerIds = Array.isArray(customerIds) ? customerIds
+      : (customerId ? [customerId] : []);
     const updates = {
-      name, jobTypeId, customerId,
+      name, jobTypeId, customerIds: resolvedCustomerIds,
       assignedManagerId: assignedManagerId || null,
       billable: billable ?? true,
       dueDaysOffset: dueDaysOffset ?? null,
