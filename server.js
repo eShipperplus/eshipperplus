@@ -245,16 +245,40 @@ function requireRole(...roles) {
 }
 
 // ─── Audit Helper ─────────────────────────────────────────────────────────────
-async function writeAudit(jobId, action, uid, name, before, after) {
-  await db.collection('wh_audit').add({
-    jobId,
-    action,
+function computeFieldDiff(before, after) {
+  if (!before || !after) return {};
+  const diff = {};
+  for (const key of Object.keys(after)) {
+    // Skip internal timestamps and large arrays from diff noise
+    if (key === 'updatedAt') continue;
+    const bVal = JSON.stringify(before[key] ?? null);
+    const aVal = JSON.stringify(after[key] ?? null);
+    if (bVal !== aVal) diff[key] = { from: before[key] ?? null, to: after[key] ?? null };
+  }
+  return diff;
+}
+
+async function writeAudit(jobId, action, uid, name, before, after, email) {
+  const record = {
+    jobId, action,
     performedBy: uid,
     performedByName: name,
+    performedByEmail: email || null,
     timestamp: Timestamp.now(),
-    before: before || null,
-    after: after || null,
-  });
+  };
+  if (action === 'created') {
+    // Store snapshot of new job (strip locations to keep doc small)
+    const { locations, ...snap } = after || {};
+    record.snapshot = snap;
+    record.locationCount = (locations || []).length;
+  } else if (action === 'deleted') {
+    const { locations, ...snap } = before || {};
+    record.snapshot = snap;
+  } else {
+    const diff = computeFieldDiff(before, after);
+    record.changes = Object.keys(diff).length ? diff : null;
+  }
+  await db.collection('wh_audit').add(record);
 }
 
 // ─── Revenue Calculation ──────────────────────────────────────────────────────
@@ -446,7 +470,7 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
     }
 
     const docRef = await db.collection('wh_jobs').add(job);
-    await writeAudit(docRef.id, 'created', uid, user.displayName, null, job);
+    await writeAudit(docRef.id, 'created', uid, user.displayName, null, job, user.email);
     res.status(201).json({ id: docRef.id, ...job });
   } catch (err) {
     console.error('POST /api/jobs error:', err);
@@ -479,7 +503,7 @@ app.put('/api/jobs/:id', requireAuth, async (req, res) => {
     }
 
     await jobRef.update(update);
-    await writeAudit(req.params.id, 'updated', uid, user.displayName, before, update);
+    await writeAudit(req.params.id, 'updated', uid, user.displayName, before, update, user.email);
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT /api/jobs/:id error:', err);
@@ -515,7 +539,7 @@ app.put('/api/jobs/:id/assign-manager', requireAuth, requireRole('manager', 'adm
     };
 
     await db.collection('wh_jobs').doc(req.params.id).update(update);
-    await writeAudit(req.params.id, 'assigned_manager', uid, user.displayName, before, update);
+    await writeAudit(req.params.id, 'assigned_manager', uid, user.displayName, before, update, user.email);
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT assign-manager error:', err);
@@ -551,7 +575,7 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
     };
 
     await db.collection('wh_jobs').doc(req.params.id).update(update);
-    await writeAudit(req.params.id, 'assigned_associate', uid, user.displayName, before, update);
+    await writeAudit(req.params.id, 'assigned_associate', uid, user.displayName, before, update, user.email);
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT assign-associate error:', err);
@@ -630,7 +654,7 @@ app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => 
       update.submittedAt = now;
     }
     await db.collection('wh_jobs').doc(req.params.id).update(update);
-    await writeAudit(req.params.id, allDone ? 'pending_review' : 'location_done', uid, user.displayName, job, update);
+    await writeAudit(req.params.id, allDone ? 'pending_review' : 'location_done', uid, user.displayName, job, update, user.email);
     res.json({ id: req.params.id, allDone, locations: updatedLocations });
   } catch (err) {
     console.error('PUT location done error:', err);
@@ -664,7 +688,7 @@ app.put('/api/jobs/:id/submit-review', requireAuth, async (req, res) => {
       updatedAt: now,
     };
     await db.collection('wh_jobs').doc(req.params.id).update(update);
-    await writeAudit(req.params.id, 'pending_review', uid, user.displayName, job, update);
+    await writeAudit(req.params.id, 'pending_review', uid, user.displayName, job, update, user.email);
     res.json({ id: req.params.id, ...job, ...update });
   } catch (err) {
     console.error('PUT submit-review error:', err);
@@ -717,7 +741,7 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
     };
 
     await db.collection('wh_jobs').doc(req.params.id).update(update);
-    await writeAudit(req.params.id, 'completed', uid, user.displayName, job, update);
+    await writeAudit(req.params.id, 'completed', uid, user.displayName, job, update, user.email);
     res.json({ id: req.params.id, ...job, ...update, rating });
   } catch (err) {
     console.error('PUT complete error:', err);
@@ -733,7 +757,7 @@ app.delete('/api/jobs/:id', requireAuth, requireRole('admin'), async (req, res) 
 
     const before = jobSnap.data();
     await db.collection('wh_jobs').doc(req.params.id).delete();
-    await writeAudit(req.params.id, 'deleted', uid, user.displayName, before, null);
+    await writeAudit(req.params.id, 'deleted', uid, user.displayName, before, null, user.email);
     res.json({ deleted: true });
   } catch (err) {
     console.error('DELETE /api/jobs/:id error:', err);
@@ -1155,8 +1179,26 @@ app.put('/api/users/:uid/password', requireAuth, requireRole('admin'), async (re
 
 app.delete('/api/users/:uid', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    if (req.params.uid === req.uid) return res.status(400).json({ error: 'Cannot delete yourself' });
-    await db.collection('wh_users').doc(req.params.uid).delete();
+    const targetUid = req.params.uid;
+    if (targetUid === req.uid) return res.status(400).json({ error: 'Cannot delete yourself' });
+
+    // Find team before deleting
+    const userSnap = await db.collection('wh_users').doc(targetUid).get();
+    const teamId = userSnap.exists ? userSnap.data().teamId : null;
+
+    // 1. Revoke all active sessions immediately
+    await auth.revokeRefreshTokens(targetUid).catch(() => {});
+    // 2. Delete Firebase Auth account — prevents future sign-in
+    await auth.deleteUser(targetUid).catch(() => {});
+    // 3. Remove Firestore user record
+    await db.collection('wh_users').doc(targetUid).delete();
+    // 4. Remove from team memberIds
+    if (teamId) {
+      await db.collection('wh_teams').doc(teamId).update({
+        memberIds: FieldValue.arrayRemove(targetUid),
+      }).catch(() => {});
+    }
+
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
