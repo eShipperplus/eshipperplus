@@ -1493,6 +1493,7 @@ function renderJobTypes() {
     <div class="section-header"><h1>Job Types</h1>
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" onclick="showAddJobTypeModal()">+ New Job Type</button>
+        <button class="btn btn-teal btn-sm" onclick="seedBuiltInJobTypes()" title="Add all standard job types (Back to Stock, Kitting, Cycle Count, etc.) without overwriting any you've already customised">⟳ Sync Built-in Types</button>
         <button class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('jobtypes-template.csv',
           ['id','name','field_id','field_label','field_type','required'],
           [['receiving','Receiving','order_number','Order Number','text','true'],
@@ -1591,6 +1592,22 @@ function addFieldRow(fieldId='', label='', type='text', required=false, options=
 function toggleOptionsInput(sel) {
   const optInput = sel.parentElement.querySelector('.field-options-input');
   if (optInput) optInput.style.display = sel.value === 'select' ? 'block' : 'none';
+}
+
+async function seedBuiltInJobTypes() {
+  if (!confirm('This will add all standard job types (Back to Stock, Kitting, Cycle Count, Disposal, etc.) that are not already configured. Your existing customisations will not be changed. Continue?')) return;
+  try {
+    const res = await apiFetch('/api/jobtypes/seed', { method: 'POST' });
+    if (res.added === 0) {
+      toast('All built-in types are already present — nothing to add');
+    } else {
+      toast(`✅ Added ${res.added} job type${res.added > 1 ? 's' : ''}: ${res.types.join(', ')}`);
+      await loadData();
+      renderView();
+    }
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  }
 }
 
 async function submitNewJobType() {
@@ -3098,7 +3115,8 @@ Object.assign(window, {
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
   uploadCustomersCSV, addCustomer, removeCustomer,
   uploadJobTypesCSV, deleteJobType, uploadRatesCSV, downloadCSVTemplate,
-  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, toggleOptionsInput, moveFieldRow, selectJtColor, submitNewJobType, submitEditJobType,
+  showAddJobTypeModal, showEditJobTypeModal, addFieldRow, toggleOptionsInput, moveFieldRow, selectJtColor,
+  seedBuiltInJobTypes, submitNewJobType, submitEditJobType,
   showInviteUserModal, submitInviteUser, assignUserTeam,
   showEditUserModal, submitEditUser, getPasswordResetLink,
   editCustomer, saveCustomerEdit,

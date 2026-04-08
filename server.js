@@ -38,27 +38,127 @@ const STATUSES = ['created', 'assigned_manager', 'assigned_associate', 'in_progr
 
 const JOB_TYPE_DEFS = {
   bts: {
-    id: 'bts',
-    name: 'Back to Stock',
+    id: 'bts', name: 'Back to Stock', color: 'blue',
     fields: [
-      { id: 'order_number', label: 'Order Number', type: 'text', required: true },
-      { id: 'cartons', label: 'Cartons', type: 'number', required: false },
-      { id: 'labels', label: 'Labels', type: 'number', required: false },
-      { id: 'units', label: 'Units', type: 'number', required: false },
-      { id: 'pallets_wrapped', label: 'Pallets Wrapped', type: 'number', required: false },
-      { id: 'labour_hours', label: 'Labour Hours', type: 'number', required: false },
+      { id: 'order_number',    label: 'SO Code / Order Number',  type: 'text',   required: true  },
+      { id: 'pallets_provided', label: 'Pallets Provided',       type: 'number', required: false },
+      { id: 'pallets_wrapped', label: 'Pallets Wrapped & Shipped', type: 'number', required: false },
+      { id: 'cartons',         label: 'Cartons Handled',         type: 'number', required: false },
+      { id: 'labels',          label: 'Labels Applied',          type: 'number', required: false },
+      { id: 'units',           label: 'Units Handled',           type: 'number', required: false },
+      { id: 'inspection_hours', label: 'Inspection Hours',       type: 'number', required: false },
     ],
   },
   kit: {
-    id: 'kit',
-    name: 'Kitting',
+    id: 'kit', name: 'Kitting', color: 'teal',
     fields: [
-      { id: 'labour_hours', label: 'Labour Hours', type: 'number', required: false },
-      { id: 'units', label: 'Units', type: 'number', required: false },
-      { id: 'pallets', label: 'Pallets', type: 'number', required: false },
-      { id: 'labels', label: 'Labels', type: 'number', required: false },
-      { id: 'skus', label: 'SKUs', type: 'number', required: false },
-      { id: 'kits_made', label: 'Kits Made', type: 'number', required: false },
+      { id: 'special_packaging', label: 'Special Packaging',     type: 'text',   required: false },
+      { id: 'kits_made',         label: 'Number of Kits',        type: 'number', required: true  },
+      { id: 'labour_hours',      label: 'Labour Hours',          type: 'number', required: false },
+      { id: 'units',             label: 'Units Handled',         type: 'number', required: false },
+      { id: 'cartons',           label: 'Cartons Handled',       type: 'number', required: false },
+      { id: 'pallets',           label: 'Pallets Handled',       type: 'number', required: false },
+      { id: 'labels',            label: 'Labeling',              type: 'number', required: false },
+      { id: 'skus',              label: 'Number of SKUs',        type: 'number', required: false },
+    ],
+  },
+  cycle_count: {
+    id: 'cycle_count', name: 'Cycle Count', color: 'purple',
+    fields: [
+      { id: 'labour_hours',         label: 'Labour Hours',              type: 'number', required: false },
+      { id: 'bins',                 label: 'Number of Bins',            type: 'number', required: false },
+      { id: 'pallets_shrink_wrapped', label: 'Pallets Shrink Wrapped',  type: 'number', required: false },
+      { id: 'pallets_put_away',     label: 'Pallets Put Away',          type: 'number', required: false },
+      { id: 'pallets_let_down',     label: 'Pallets Let Down',          type: 'number', required: false },
+      { id: 'pallets_consolidated', label: 'Pallets Consolidated',      type: 'number', required: false },
+      { id: 'units',                label: 'Units Handled',             type: 'number', required: false },
+      { id: 'unit_labels',          label: 'Unit Labels Applied',       type: 'number', required: false },
+      { id: 'carton_labels',        label: 'Carton Labels Applied',     type: 'number', required: false },
+      { id: 'cartons',              label: 'Cartons Handled',           type: 'number', required: false },
+    ],
+  },
+  disposal: {
+    id: 'disposal', name: 'Disposal', color: 'red',
+    fields: [
+      { id: 'disposal_type',    label: 'Type of Disposal',   type: 'select', required: true,
+        options: ['Damage', 'Expired', 'Customer Request', 'Returns', 'Closeout Inventory'] },
+      { id: 'weight',           label: 'Weight (lbs)',        type: 'number', required: false },
+      { id: 'inspection_hours', label: 'Inspection Hours',    type: 'number', required: false },
+      { id: 'units',            label: 'Units Handled',       type: 'number', required: false },
+      { id: 'pallets',          label: 'Number of Pallets',   type: 'number', required: false },
+    ],
+  },
+  consolidation: {
+    id: 'consolidation', name: 'Consolidation', color: 'orange',
+    fields: [
+      { id: 'labour_hours', label: 'Labour Hours',      type: 'number', required: false },
+      { id: 'units',        label: 'Units Handled',     type: 'number', required: false },
+      { id: 'pallets',      label: 'Number of Pallets', type: 'number', required: false },
+      { id: 'cartons',      label: 'Cartons Handled',   type: 'number', required: false },
+    ],
+  },
+  closeout: {
+    id: 'closeout', name: 'Closeout', color: 'yellow',
+    fields: [
+      { id: 'pallets',      label: 'Number of Pallets', type: 'number', required: false },
+      { id: 'labour_hours', label: 'Labour Hours',      type: 'number', required: false },
+      { id: 'units',        label: 'Units Handled',     type: 'number', required: false },
+      { id: 'cartons',      label: 'Cartons Handled',   type: 'number', required: false },
+    ],
+  },
+  image_request: {
+    id: 'image_request', name: 'Image Request', color: 'pink',
+    fields: [
+      { id: 'labour_hours', label: 'Labour Hours',      type: 'number', required: false },
+      { id: 'units',        label: 'Units Handled',     type: 'number', required: false },
+      { id: 'cartons',      label: 'Cartons Handled',   type: 'number', required: false },
+    ],
+  },
+  capture_item_details: {
+    id: 'capture_item_details', name: 'Capture Item Details', color: 'gray',
+    fields: [
+      { id: 'units',        label: 'Units Handled',     type: 'number', required: false },
+      { id: 'labour_hours', label: 'Labour Hours',      type: 'number', required: false },
+      { id: 'cartons',      label: 'Cartons Handled',   type: 'number', required: false },
+    ],
+  },
+  miscellaneous: {
+    id: 'miscellaneous', name: 'Miscellaneous', color: 'gray',
+    fields: [
+      { id: 'units',        label: 'Units Handled',     type: 'number', required: false },
+      { id: 'pallets',      label: 'Number of Pallets', type: 'number', required: false },
+      { id: 'cartons',      label: 'Cartons Handled',   type: 'number', required: false },
+      { id: 'labour_hours', label: 'Labour Hours',      type: 'number', required: false },
+    ],
+  },
+  returns_inspection: {
+    id: 'returns_inspection', name: 'Returns Inspection', color: 'orange',
+    fields: [
+      { id: 'inspection_hours', label: 'Inspection Hours',   type: 'number', required: false },
+      { id: 'units',            label: 'Units Handled',      type: 'number', required: false },
+      { id: 'cartons',          label: 'Cartons Handled',    type: 'number', required: false },
+      { id: 'pallets',          label: 'Pallets Handled',    type: 'number', required: false },
+    ],
+  },
+  relabelling_repack: {
+    id: 'relabelling_repack', name: 'Relabelling & Repack', color: 'blue',
+    fields: [
+      { id: 'special_packaging', label: 'Special Packaging', type: 'text',   required: false },
+      { id: 'labour_hours',      label: 'Labour Hours',      type: 'number', required: false },
+      { id: 'units',             label: 'Units Handled',     type: 'number', required: false },
+      { id: 'pallets',           label: 'Pallets Handled',   type: 'number', required: false },
+    ],
+  },
+  cross_dock: {
+    id: 'cross_dock', name: 'Cross-Dock', color: 'teal',
+    fields: [
+      { id: 'cartons',         label: 'Cartons Handled',              type: 'number', required: false },
+      { id: 'units',           label: 'Units Handled',                type: 'number', required: false },
+      { id: 'days',            label: 'Number of Days',               type: 'number', required: false },
+      { id: 'labour_hours',    label: 'Labour Hours',                 type: 'number', required: false },
+      { id: 'pallets',         label: 'Pallets Handled',              type: 'number', required: false },
+      { id: 'labels',          label: 'Labels Applied',               type: 'number', required: false },
+      { id: 'labels_supplied', label: 'Labels Supplied by eShipper+', type: 'number', required: false },
     ],
   },
 };
@@ -216,7 +316,10 @@ app.get('/api/init', requireAuth, async (req, res) => {
     ]);
 
     const customers = customersSnap.exists ? customersSnap.data().list : [];
-    const jobTypes = jobTypesSnap.exists ? jobTypesSnap.data().list : Object.values(JOB_TYPE_DEFS);
+    // Merge: Firestore-configured types win; built-ins fill any gaps
+    const firestoreTypes = jobTypesSnap.exists ? (jobTypesSnap.data().list || []) : [];
+    const firestoreIds = new Set(firestoreTypes.map(t => t.id));
+    const jobTypes = [...firestoreTypes, ...Object.values(JOB_TYPE_DEFS).filter(t => !firestoreIds.has(t.id))];
     const rateCards = rateCardsSnap.exists ? rateCardsSnap.data() : {};
     const targets = targetsSnap.exists ? targetsSnap.data() : {};
 
@@ -877,6 +980,21 @@ app.put('/api/jobtypes', requireAuth, requireRole('admin'), async (req, res) => 
     if (!Array.isArray(list)) return res.status(400).json({ error: 'list must be an array' });
     await db.collection('wh_config').doc('jobTypes').set({ list });
     res.json({ list });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Seed all built-in job types into Firestore (Firestore-customised ones are preserved)
+app.post('/api/jobtypes/seed', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const snap = await db.collection('wh_config').doc('jobTypes').get();
+    const existing = snap.exists ? (snap.data().list || []) : [];
+    const existingIds = new Set(existing.map(t => t.id));
+    const toAdd = Object.values(JOB_TYPE_DEFS).filter(t => !existingIds.has(t.id));
+    const merged = [...existing, ...toAdd];
+    await db.collection('wh_config').doc('jobTypes').set({ list: merged });
+    res.json({ added: toAdd.length, total: merged.length, types: toAdd.map(t => t.name) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
