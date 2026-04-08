@@ -2599,6 +2599,8 @@ async function submitInviteUser() {
   const password = document.getElementById('inv-password')?.value || '';
   if (!email) { toast('Email is required'); return; }
   if (!password || password.length < 6) { toast('Password must be at least 6 characters'); return; }
+  const btn = document.querySelector('.modal-footer .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
   try {
     // Create account and set role/team
     const result = await apiFetch('/api/users/invite', {
@@ -2620,7 +2622,10 @@ async function submitInviteUser() {
     } else {
       toast(`Account created for ${email} — share the link manually`, 4000);
     }
-  } catch(err) { toast('Error: ' + err.message, 3000); }
+  } catch(err) {
+    toast('Error: ' + err.message, 3000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Create User'; }
+  }
 }
 
 async function assignUserTeam(uid, teamId) {
