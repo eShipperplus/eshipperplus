@@ -250,6 +250,20 @@ function requireRole(...roles) {
   };
 }
 
+// ─── Job Number Counter ───────────────────────────────────────────────────────
+async function getNextJobNumber() {
+  const counterRef = db.collection('wh_config').doc('counters');
+  const snap = await counterRef.get();
+  const current = snap.exists ? (snap.data().jobCounter || 0) : 0;
+  const next = current + 1;
+  if (snap.exists) {
+    await counterRef.update({ jobCounter: next });
+  } else {
+    await counterRef.set({ jobCounter: next });
+  }
+  return `ES-${String(next).padStart(3, '0')}`;
+}
+
 // ─── Audit Helper ─────────────────────────────────────────────────────────────
 function computeFieldDiff(before, after) {
   if (!before || !after) return {};
@@ -285,6 +299,28 @@ async function writeAudit(jobId, action, uid, name, before, after, email) {
     record.changes = Object.keys(diff).length ? diff : null;
   }
   await db.collection('wh_audit').add(record);
+}
+
+// ─── Universal Transaction Log ────────────────────────────────────────────────
+// Writes to wh_logs — covers jobs, users, config, templates, teams
+async function writeLog({ action, entity, entityId, entityLabel, uid, name, email, role, changes, metadata }) {
+  try {
+    await db.collection('wh_logs').add({
+      action,                          // e.g. 'job.created', 'user.invited', 'config.rates.updated'
+      entity,                          // 'job' | 'user' | 'config' | 'template' | 'team'
+      entityId:    entityId    || null,
+      entityLabel: entityLabel || null, // human-readable: 'ES-001 · Acme Corp · BTS', 'user@email.com'
+      performedBy:      uid,
+      performedByName:  name  || null,
+      performedByEmail: email || null,
+      performedByRole:  role  || null,
+      changes:  changes  || null,
+      metadata: metadata || null,
+      timestamp: Timestamp.now(),
+    });
+  } catch (e) {
+    console.error('writeLog error:', e.message);
+  }
 }
 
 // ─── Revenue Calculation ──────────────────────────────────────────────────────
@@ -428,8 +464,10 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
       return res.status(400).json({ error: `Invalid jobTypeId: ${jobTypeId}` });
     }
 
+    const jobNumber = await getNextJobNumber();
     const now = Timestamp.now();
     const job = {
+      jobNumber,
       jobTypeId,
       customerId,
       status: 'created',
@@ -483,6 +521,9 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
 
     const docRef = await db.collection('wh_jobs').add(job);
     await writeAudit(docRef.id, 'created', uid, user.displayName, null, job, user.email);
+    await writeLog({ action: 'job.created', entity: 'job', entityId: docRef.id,
+      entityLabel: `${jobNumber} · ${customerId} · ${jobTypeId}`,
+      uid, name: user.displayName, email: user.email, role: user.role });
     res.status(201).json({ id: docRef.id, ...job });
   } catch (err) {
     console.error('POST /api/jobs error:', err);
@@ -516,6 +557,9 @@ app.put('/api/jobs/:id', requireAuth, async (req, res) => {
 
     await jobRef.update(update);
     await writeAudit(req.params.id, 'updated', uid, user.displayName, before, update, user.email);
+    await writeLog({ action: 'job.updated', entity: 'job', entityId: req.params.id,
+      entityLabel: `${before.jobNumber || req.params.id} · ${before.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role });
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT /api/jobs/:id error:', err);
@@ -552,6 +596,10 @@ app.put('/api/jobs/:id/assign-manager', requireAuth, requireRole('manager', 'adm
 
     await db.collection('wh_jobs').doc(req.params.id).update(update);
     await writeAudit(req.params.id, 'assigned_manager', uid, user.displayName, before, update, user.email);
+    await writeLog({ action: 'job.manager_assigned', entity: 'job', entityId: req.params.id,
+      entityLabel: `${before.jobNumber || req.params.id} · ${before.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role,
+      metadata: { assignedManager: mgrSnap.data().displayName } });
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT assign-manager error:', err);
@@ -588,6 +636,10 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
 
     await db.collection('wh_jobs').doc(req.params.id).update(update);
     await writeAudit(req.params.id, 'assigned_associate', uid, user.displayName, before, update, user.email);
+    await writeLog({ action: 'job.associates_assigned', entity: 'job', entityId: req.params.id,
+      entityLabel: `${before.jobNumber || req.params.id} · ${before.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role,
+      metadata: { associates: validAssocs.map(s => s.data().displayName) } });
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT assign-associate error:', err);
@@ -668,6 +720,10 @@ app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => 
     }
     await db.collection('wh_jobs').doc(req.params.id).update(update);
     await writeAudit(req.params.id, allDone ? 'pending_review' : 'location_done', uid, user.displayName, job, update, user.email);
+    await writeLog({ action: allDone ? 'job.submitted_review' : 'job.location_done', entity: 'job',
+      entityId: req.params.id, entityLabel: `${job.jobNumber || req.params.id} · ${job.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role,
+      metadata: { location: loc.name } });
     res.json({ id: req.params.id, allDone, locations: updatedLocations });
   } catch (err) {
     console.error('PUT location done error:', err);
@@ -702,6 +758,9 @@ app.put('/api/jobs/:id/submit-review', requireAuth, async (req, res) => {
     };
     await db.collection('wh_jobs').doc(req.params.id).update(update);
     await writeAudit(req.params.id, 'pending_review', uid, user.displayName, job, update, user.email);
+    await writeLog({ action: 'job.submitted_review', entity: 'job', entityId: req.params.id,
+      entityLabel: `${job.jobNumber || req.params.id} · ${job.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role });
     res.json({ id: req.params.id, ...job, ...update });
   } catch (err) {
     console.error('PUT submit-review error:', err);
@@ -755,6 +814,10 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
 
     await db.collection('wh_jobs').doc(req.params.id).update(update);
     await writeAudit(req.params.id, 'completed', uid, user.displayName, job, update, user.email);
+    await writeLog({ action: 'job.completed', entity: 'job', entityId: req.params.id,
+      entityLabel: `${job.jobNumber || req.params.id} · ${job.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role,
+      metadata: { revenue, cost, profit, rating } });
     res.json({ id: req.params.id, ...job, ...update, rating });
   } catch (err) {
     console.error('PUT complete error:', err);
@@ -771,6 +834,9 @@ app.delete('/api/jobs/:id', requireAuth, requireRole('admin'), async (req, res) 
     const before = jobSnap.data();
     await db.collection('wh_jobs').doc(req.params.id).delete();
     await writeAudit(req.params.id, 'deleted', uid, user.displayName, before, null, user.email);
+    await writeLog({ action: 'job.deleted', entity: 'job', entityId: req.params.id,
+      entityLabel: `${before.jobNumber || req.params.id} · ${before.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role });
     res.json({ deleted: true });
   } catch (err) {
     console.error('DELETE /api/jobs/:id error:', err);
@@ -948,6 +1014,9 @@ app.put('/api/customers', requireAuth, requireRole('admin'), async (req, res) =>
     const { list } = req.body;
     if (!Array.isArray(list)) return res.status(400).json({ error: 'list must be an array' });
     await db.collection('wh_config').doc('customers').set({ list });
+    await writeLog({ action: 'config.customers_updated', entity: 'config', entityId: 'customers',
+      entityLabel: `Customers list (${list.length} entries)`,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
     res.json({ list });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -974,6 +1043,9 @@ app.put('/api/customers/rename', requireAuth, requireRole('admin'), async (req, 
     jobsSnap.docs.forEach(d => batch.update(d.ref, { customerId: newName }));
     await batch.commit();
 
+    await writeLog({ action: 'config.customers_renamed', entity: 'config', entityId: 'customers',
+      entityLabel: `"${oldName}" → "${newName}" (${jobsSnap.size} jobs updated)`,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
     res.json({ list: newList, updated: jobsSnap.size });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1016,6 +1088,9 @@ app.put('/api/jobtypes', requireAuth, requireRole('admin'), async (req, res) => 
     const { list } = req.body;
     if (!Array.isArray(list)) return res.status(400).json({ error: 'list must be an array' });
     await db.collection('wh_config').doc('jobTypes').set({ list });
+    await writeLog({ action: 'config.jobtypes_updated', entity: 'config', entityId: 'jobTypes',
+      entityLabel: `Job types updated (${list.length} types)`,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
     res.json({ list });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1031,6 +1106,9 @@ app.post('/api/jobtypes/seed', requireAuth, requireRole('admin'), async (req, re
     const toAdd = Object.values(JOB_TYPE_DEFS).filter(t => !existingIds.has(t.id));
     const merged = [...existing, ...toAdd];
     await db.collection('wh_config').doc('jobTypes').set({ list: merged });
+    await writeLog({ action: 'config.jobtypes_seeded', entity: 'config', entityId: 'jobTypes',
+      entityLabel: `Seeded ${toAdd.length} built-in job types`,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
     res.json({ added: toAdd.length, total: merged.length, types: toAdd.map(t => t.name) });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1041,6 +1119,9 @@ app.put('/api/rates', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const rates = req.body; // { [customerId]: { [jobTypeId]: { [fieldId]: number } } }
     await db.collection('wh_config').doc('rateCards').set(rates);
+    await writeLog({ action: 'config.rates_updated', entity: 'config', entityId: 'rateCards',
+      entityLabel: `Rate cards updated for: ${Object.keys(rates).join(', ') || '(none)'}`,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
     res.json(rates);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1051,6 +1132,9 @@ app.put('/api/targets', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const targets = req.body; // { [jobTypeId]: { targetMarginPct, goodThresholdPct } }
     await db.collection('wh_config').doc('targets').set(targets);
+    await writeLog({ action: 'config.targets_updated', entity: 'config', entityId: 'targets',
+      entityLabel: `Profitability targets updated`,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
     res.json(targets);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1072,10 +1156,16 @@ app.put('/api/users/:uid/role', requireAuth, requireRole('admin'), async (req, r
     const { role } = req.body;
     if (!ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
     // Write to both Firestore AND Firebase custom claims so role is in the token itself
+    const targetSnap = await db.collection('wh_users').doc(req.params.uid).get();
+    const targetEmail = targetSnap.exists ? targetSnap.data().email : req.params.uid;
     await Promise.all([
       db.collection('wh_users').doc(req.params.uid).update({ role }),
       auth.setCustomUserClaims(req.params.uid, { role }),
     ]);
+    await writeLog({ action: 'user.role_changed', entity: 'user', entityId: req.params.uid,
+      entityLabel: targetEmail, uid: req.uid, name: req.user.displayName,
+      email: req.user.email, role: req.user.role,
+      changes: { role: { from: targetSnap.data()?.role, to: role } } });
     res.json({ uid: req.params.uid, role });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1088,7 +1178,12 @@ app.put('/api/users/:uid/cost', requireAuth, requireRole('admin'), async (req, r
     if (typeof hourlyCost !== 'number' || hourlyCost < 0) {
       return res.status(400).json({ error: 'hourlyCost must be a non-negative number' });
     }
+    const costUserSnap = await db.collection('wh_users').doc(req.params.uid).get();
     await db.collection('wh_users').doc(req.params.uid).update({ hourlyCost });
+    await writeLog({ action: 'user.cost_updated', entity: 'user', entityId: req.params.uid,
+      entityLabel: costUserSnap.exists ? costUserSnap.data().email : req.params.uid,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role,
+      changes: { hourlyCost: { from: costUserSnap.data()?.hourlyCost, to: hourlyCost } } });
     res.json({ uid: req.params.uid, hourlyCost });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1160,6 +1255,10 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
     // Generate a password-set link (looks like password reset but lets them choose their password)
     const resetLink = await auth.generatePasswordResetLink(emailKey).catch(() => null);
 
+    await writeLog({ action: 'user.invited', entity: 'user', entityId: authUser.uid,
+      entityLabel: emailKey, uid: req.uid, name: req.user.displayName,
+      email: req.user.email, role: req.user.role,
+      metadata: { invitedRole: claimRole, displayName: nameToUse } });
     res.json({ status: 'invited', email: emailKey, uid: authUser.uid, resetLink });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1172,6 +1271,9 @@ app.post('/api/users/:uid/reset-password-link', requireAuth, requireRole('admin'
     const userRecord = await auth.getUser(req.params.uid);
     if (!userRecord.email) return res.status(400).json({ error: 'User has no email address' });
     const resetLink = await auth.generatePasswordResetLink(userRecord.email);
+    await writeLog({ action: 'user.password_reset', entity: 'user', entityId: req.params.uid,
+      entityLabel: userRecord.email, uid: req.uid, name: req.user.displayName,
+      email: req.user.email, role: req.user.role });
     res.json({ resetLink, email: userRecord.email });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1212,6 +1314,10 @@ app.delete('/api/users/:uid', requireAuth, requireRole('admin'), async (req, res
       }).catch(() => {});
     }
 
+    const deletedEmail = userSnap.exists ? userSnap.data().email : targetUid;
+    await writeLog({ action: 'user.deleted', entity: 'user', entityId: targetUid,
+      entityLabel: deletedEmail, uid: req.uid, name: req.user.displayName,
+      email: req.user.email, role: req.user.role });
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1234,6 +1340,9 @@ app.post('/api/teams', requireAuth, requireRole('admin'), async (req, res) => {
     if (!name) return res.status(400).json({ error: 'name required' });
     const team = { name, managerId: managerId || null, memberIds: memberIds || [] };
     const ref = await db.collection('wh_teams').add(team);
+    await writeLog({ action: 'team.created', entity: 'team', entityId: ref.id,
+      entityLabel: name, uid: req.uid, name: req.user.displayName,
+      email: req.user.email, role: req.user.role });
     res.status(201).json({ id: ref.id, ...team });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1277,7 +1386,11 @@ app.put('/api/teams/:id/members', requireAuth, requireRole('admin'), async (req,
 
 app.delete('/api/teams/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
+    const teamSnap = await db.collection('wh_teams').doc(req.params.id).get();
     await db.collection('wh_teams').doc(req.params.id).delete();
+    await writeLog({ action: 'team.deleted', entity: 'team', entityId: req.params.id,
+      entityLabel: teamSnap.exists ? teamSnap.data().name : req.params.id,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1316,6 +1429,9 @@ app.post('/api/templates', requireAuth, requireRole('manager', 'admin'), async (
       createdAt: now,
       updatedAt: now,
     });
+    await writeLog({ action: 'template.created', entity: 'template', entityId: ref.id,
+      entityLabel: name, uid: req.uid, name: req.user.displayName,
+      email: req.user.email, role: req.user.role });
     res.status(201).json({ id: ref.id });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1339,14 +1455,38 @@ app.put('/api/templates/:id', requireAuth, requireRole('manager', 'admin'), asyn
       updatedAt: Timestamp.now(),
     };
     await db.collection('wh_templates').doc(req.params.id).update(updates);
+    await writeLog({ action: 'template.updated', entity: 'template', entityId: req.params.id,
+      entityLabel: name, uid: req.uid, name: req.user.displayName,
+      email: req.user.email, role: req.user.role });
     res.json({ updated: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/templates/:id', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
   try {
+    const tplSnap = await db.collection('wh_templates').doc(req.params.id).get();
     await db.collection('wh_templates').doc(req.params.id).delete();
+    await writeLog({ action: 'template.deleted', entity: 'template', entityId: req.params.id,
+      entityLabel: tplSnap.exists ? tplSnap.data().name : req.params.id,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
     res.json({ deleted: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Activity Logs ────────────────────────────────────────────────────────────
+app.get('/api/logs', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
+  try {
+    const { entity, limit = 200 } = req.query;
+    let query = db.collection('wh_logs').orderBy('timestamp', 'desc');
+    // Managers only see job-related logs
+    if (req.user.role === 'manager') {
+      query = query.where('entity', '==', 'job');
+    } else if (entity) {
+      query = query.where('entity', '==', entity);
+    }
+    query = query.limit(parseInt(limit) || 200);
+    const snap = await query.get();
+    res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

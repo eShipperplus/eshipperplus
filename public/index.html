@@ -541,6 +541,7 @@ const NAV_ITEMS = {
     { id: 'rates', label: 'Rate Cards', icon: '💲', group: 'Config' },
     { id: 'jobtypes', label: 'Job Types', icon: '🔧' },
     { id: 'users', label: 'Users & Teams', icon: '👥', group: 'Admin' },
+    { id: 'activity-log', label: 'Activity Log', icon: '📜' },
   ],
   manager: [
     { id: 'my-jobs', label: 'My Jobs', icon: '📋' },
@@ -606,6 +607,7 @@ function renderView() {
   else if (view === 'jobtypes') content.innerHTML = renderJobTypes();
   else if (view === 'users') content.innerHTML = renderUsersTeams();
   else if (view === 'templates') content.innerHTML = renderTemplates();
+  else if (view === 'activity-log') { content.innerHTML = renderActivityLogShell(); loadActivityLog(); }
   else content.innerHTML = '<div class="empty-state">Select a view</div>';
   attachViewHandlers(view);
 }
@@ -849,9 +851,10 @@ function renderDashboard() {
       <div class="card-title">Open Jobs</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Customer</th><th>Type</th><th>Status</th><th>Age</th><th>Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
+          <thead><tr><th>#</th><th>Customer</th><th>Type</th><th>Status</th><th>Age</th><th>Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
           <tbody>${open.length ? open.sort((a,b)=>ageMs(b)-ageMs(a)).map(j=>`
             <tr>
+              <td><span style="font-weight:700;color:var(--primary);font-size:12px">${j.jobNumber||''}</span></td>
               <td>${j.customerId}</td>
               <td>${jtBadge(j.jobTypeId)}</td>
               <td>${statusBadge(j.status)}</td>
@@ -1082,7 +1085,7 @@ function renderAllJobs() {
       </div>
       <div class="tbl-wrap">
         <table id="all-jobs-table">
-          <thead><tr><th>Customer</th><th>Type</th><th>Status</th><th>Billable</th><th>Created</th><th>Created By</th><th>Assigned</th><th>Revenue</th><th>Rating</th><th>Actions</th></tr></thead>
+          <thead><tr><th>#</th><th>Customer</th><th>Type</th><th>Status</th><th>Billable</th><th>Created</th><th>Created By</th><th>Assigned</th><th>Revenue</th><th>Rating</th><th>Actions</th></tr></thead>
           <tbody>${renderJobRows(jobs)}</tbody>
         </table>
       </div>
@@ -1090,9 +1093,10 @@ function renderAllJobs() {
 }
 
 function renderJobRows(jobs) {
-  if (!jobs.length) return '<tr><td colspan="10" class="empty-state">No jobs found</td></tr>';
+  if (!jobs.length) return '<tr><td colspan="11" class="empty-state">No jobs found</td></tr>';
   const canAssign = state.user.role === 'admin' || state.user.role === 'manager';
   return jobs.map(j=>`<tr>
+    <td><span style="font-weight:700;color:var(--primary);font-size:12px;white-space:nowrap">${j.jobNumber||''}</span></td>
     <td>${j.customerId}</td>
     <td>${jtBadge(j.jobTypeId)}</td>
     <td>${statusBadge(j.status)}${(j.locations||[]).length ? `<span style="font-size:11px;color:var(--text-light);margin-left:5px">${(j.locations||[]).filter(l=>l.status==='done').length}/${(j.locations||[]).length}</span>` : ''}</td>
@@ -1178,7 +1182,7 @@ function renderMyJobs() {
         <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <div>
-              <div style="font-weight:700">${j.customerId} — ${jobTypeName(j.jobTypeId)}</div>
+              <div style="font-weight:700">${j.jobNumber?`<span style="color:var(--primary);font-size:12px;margin-right:6px">${j.jobNumber}</span>`:''}${j.customerId} — ${jobTypeName(j.jobTypeId)}</div>
               <div style="font-size:12px;color:var(--text-light)">Due: ${j.dueDate||'—'} | ${statusBadge(j.status)}</div>
             </div>
             <div style="display:flex;gap:8px">
@@ -1872,6 +1876,121 @@ async function deleteTemplate(tplId, tplName) {
     toast('Template deleted');
     renderView();
   } catch (err) { toast('Error: ' + err.message, 3000); }
+}
+
+// ── Activity Log ──────────────────────────────────────────────────────────────
+function renderActivityLogShell() {
+  const isAdmin = state.user?.role === 'admin';
+  const entityOptions = isAdmin
+    ? ['job','user','config','template','team']
+    : ['job'];
+  return `
+    <div class="section-header"><h1>Activity Log</h1></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="filter-row" style="flex-wrap:wrap;gap:10px">
+        <div class="form-group" style="min-width:140px"><label>Category</label>
+          <select id="al-entity" onchange="loadActivityLog()">
+            <option value="">All</option>
+            ${entityOptions.map(e=>`<option value="${e}">${e.charAt(0).toUpperCase()+e.slice(1)}s</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group" style="flex:1;min-width:200px"><label>Search</label>
+          <input type="text" id="al-search" placeholder="Search by user, label, action…"
+            oninput="filterActivityLog()" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px"/>
+        </div>
+        <div style="align-self:flex-end"><button class="btn btn-primary" onclick="loadActivityLog()">Refresh</button></div>
+      </div>
+    </div>
+    <div class="card" style="padding:0">
+      <div id="al-table-wrap" style="overflow-x:auto">
+        <div style="padding:24px;color:var(--text-light);text-align:center">Loading…</div>
+      </div>
+    </div>`;
+}
+
+async function loadActivityLog() {
+  const wrap = document.getElementById('al-table-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="padding:24px;color:var(--text-light);text-align:center">Loading…</div>';
+  try {
+    const entity = document.getElementById('al-entity')?.value || '';
+    const params = entity ? `?entity=${encodeURIComponent(entity)}&limit=300` : '?limit=300';
+    const logs = await apiFetch(`/api/logs${params}`);
+    window._activityLogs = logs;
+    filterActivityLog();
+  } catch (e) {
+    if (wrap) wrap.innerHTML = `<div style="padding:24px;color:var(--danger)">${e.message}</div>`;
+  }
+}
+
+const ACTION_ICONS = {
+  'job.created': '➕', 'job.updated': '✏️', 'job.deleted': '🗑️',
+  'job.manager_assigned': '👤', 'job.associates_assigned': '👥',
+  'job.location_done': '📍', 'job.submitted_review': '📋',
+  'job.completed': '✅', 'job.rejected': '↩️', 'job.reopened': '🔄',
+  'user.invited': '📧', 'user.role_changed': '🔑', 'user.cost_updated': '💲',
+  'user.deleted': '❌', 'user.password_reset': '🔐', 'user.first_signin': '👋',
+  'config.customers_updated': '🏢', 'config.customers_renamed': '✏️',
+  'config.rates_updated': '💰', 'config.targets_updated': '🎯',
+  'config.jobtypes_updated': '🔧', 'config.jobtypes_seeded': '🌱',
+  'template.created': '📋', 'template.updated': '✏️', 'template.deleted': '🗑️',
+  'team.created': '🏗️', 'team.deleted': '🗑️',
+};
+
+function filterActivityLog() {
+  const wrap = document.getElementById('al-table-wrap');
+  if (!wrap) return;
+  const q = (document.getElementById('al-search')?.value || '').toLowerCase();
+  const logs = (window._activityLogs || []).filter(l => {
+    if (!q) return true;
+    return (l.action||'').toLowerCase().includes(q) ||
+           (l.entityLabel||'').toLowerCase().includes(q) ||
+           (l.performedByName||'').toLowerCase().includes(q) ||
+           (l.performedByEmail||'').toLowerCase().includes(q);
+  });
+  if (!logs.length) {
+    wrap.innerHTML = '<div style="padding:24px;color:var(--text-light);text-align:center">No log entries found</div>';
+    return;
+  }
+  const rows = logs.map(l => {
+    const ts = l.timestamp?.toDate ? l.timestamp.toDate() : new Date((l.timestamp?._seconds||0)*1000);
+    const timeStr = ts.toLocaleString('en-CA', { dateStyle:'medium', timeStyle:'short' });
+    const icon = ACTION_ICONS[l.action] || '📌';
+    const actionLabel = (l.action||'').replace(/\./g,' › ').replace(/_/g,' ');
+    const entityBadgeColor = { job:'var(--primary)', user:'var(--teal)', config:'var(--warning)',
+      template:'#805ad5', team:'#d69e2e' }[l.entity] || '#888';
+    let metaHtml = '';
+    if (l.metadata) {
+      const parts = Object.entries(l.metadata)
+        .filter(([,v]) => v !== null && v !== undefined)
+        .map(([k,v]) => `<span style="color:var(--text-light);font-size:11px">${k}: <strong>${Array.isArray(v)?v.join(', '):v}</strong></span>`);
+      if (parts.length) metaHtml = `<div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:8px">${parts.join('')}</div>`;
+    }
+    if (l.changes) {
+      const parts = Object.entries(l.changes)
+        .map(([k,v]) => `<span style="color:var(--text-light);font-size:11px">${k}: <em>${v.from??'—'}</em> → <strong>${v.to??'—'}</strong></span>`);
+      if (parts.length) metaHtml += `<div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:8px">${parts.join('')}</div>`;
+    }
+    return `<tr>
+      <td style="white-space:nowrap;font-size:12px;color:var(--text-light)">${timeStr}</td>
+      <td><span style="background:${entityBadgeColor};color:#fff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600">${l.entity||''}</span></td>
+      <td>${icon} <span style="font-size:13px">${actionLabel}</span></td>
+      <td><div style="font-size:13px;font-weight:600">${l.entityLabel||l.entityId||'—'}</div>${metaHtml}</td>
+      <td style="white-space:nowrap;font-size:13px">${l.performedByName||'—'}<div style="font-size:11px;color:var(--text-light)">${l.performedByRole||''}</div></td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr style="background:#f7f8fc">
+      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Timestamp</th>
+      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Category</th>
+      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Action</th>
+      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Details</th>
+      <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text-light);border-bottom:1px solid var(--border)">Performed By</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+  // Zebra stripe
+  wrap.querySelectorAll('tbody tr').forEach((r,i)=>{ r.style.background = i%2===0?'#fff':'#f9fafb'; });
 }
 
 // ── Rate Cards ──
@@ -2703,7 +2822,7 @@ async function openJobModal(jobId) {
 
   const overlay = showModal(`
     <div class="modal-header">
-      <h2>${job.customerId} — ${jobTypeName(job.jobTypeId)}</h2>
+      <h2>${job.jobNumber ? `<span style="color:#a0aec0;font-size:14px;font-weight:600;margin-right:8px">${job.jobNumber}</span>` : ''}${job.customerId} — ${jobTypeName(job.jobTypeId)}</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
@@ -3755,6 +3874,7 @@ Object.assign(window, {
   showQuickAssignModal, submitQuickAssign,
   openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
   toggleAllCustomers, getCustomerPickerValue,
+  loadActivityLog, filterActivityLog,
   openSaveTemplateModal, submitSaveTemplate,
   showCreateTemplateModal, submitCreateTemplate,
   showEditTemplateModal, submitEditTemplate,
