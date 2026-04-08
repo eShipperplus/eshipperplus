@@ -71,6 +71,8 @@ tr:hover td { background: #f0f4ff; }
 .badge-great { background:#c6f6d5; color:#276749; }
 .badge-good { background:#bee3f8; color:#2b6cb0; }
 .badge-needs_improvement { background:#fed7d7; color:#c53030; }
+.badge-overdue  { background:#fed7d7; color:#c53030; }
+.badge-due-today { background:#fefcbf; color:#744210; }
 
 /* ── Forms ── */
 .form-group { margin-bottom: 14px; }
@@ -651,6 +653,13 @@ function fmtDate(ts) {
 }
 function statusBadge(s) { return `<span class="badge badge-${s}">${s.replace(/_/g,' ')}</span>`; }
 function ratingBadge(r) { return r ? `<span class="badge badge-${r}">${r.replace(/_/g,' ')}</span>` : '—'; }
+function isOverdue(j)  { if (!j.dueDate || j.status === 'completed') return false; return j.dueDate < new Date().toISOString().split('T')[0]; }
+function isDueToday(j) { if (!j.dueDate || j.status === 'completed') return false; return j.dueDate === new Date().toISOString().split('T')[0]; }
+function dueBadge(j) {
+  if (isOverdue(j))  return `<span class="badge badge-overdue" style="margin-left:4px">Overdue</span>`;
+  if (isDueToday(j)) return `<span class="badge badge-due-today" style="margin-left:4px">Due Today</span>`;
+  return '';
+}
 function jobTypeName(id) {
   const jt = (state.data.jobTypes||[]).find(j => j.id === id);
   return jt ? jt.name : (id === 'bts' ? 'Back to Stock' : id === 'kit' ? 'Kitting' : id);
@@ -829,6 +838,8 @@ function renderDashboard() {
 
   const sum = (arr, key) => arr.reduce((a, b) => a + (b[key] || 0), 0);
   const open = jobs.filter(j => j.status !== 'completed');
+  const overdueJobs  = open.filter(isOverdue);
+  const dueTodayJobs = open.filter(isDueToday);
 
   const todayRevDiff = todayJobs.length > 0 ? '+' : '';
   const kpis = [
@@ -871,6 +882,16 @@ function renderDashboard() {
       </div>
     </div>` : ''}
     <div class="kpi-row">${kpis.map(k=>`<div class="kpi"><div class="val">${k.val}</div><div class="lbl">${k.lbl}</div>${k.trend?`<div class="kpi-trend" style="color:var(--teal);font-size:11px;margin-top:4px">↑ ${k.trend}</div>`:''}</div>`).join('')}</div>
+    <div class="kpi-row" style="grid-template-columns:repeat(2,1fr);max-width:320px;margin-bottom:0">
+      <div class="kpi" style="cursor:pointer;border:2px solid #fc8181" onclick="navToJobsFilter('overdue')">
+        <div class="val" style="color:#c53030">${overdueJobs.length}</div>
+        <div class="lbl" style="color:#c53030;font-weight:700">Overdue</div>
+      </div>
+      <div class="kpi" style="cursor:pointer;border:2px solid #f6e05e" onclick="navToJobsFilter('today')">
+        <div class="val" style="color:#744210">${dueTodayJobs.length}</div>
+        <div class="lbl" style="color:#744210;font-weight:700">Due Today</div>
+      </div>
+    </div>
     <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
       ${['created','assigned_manager','assigned_associate','in_progress','pending_review','completed'].map(s=>`
         <div class="kpi"><div class="val" style="font-size:20px">${statusCounts[s]||0}</div><div class="lbl">${s.replace(/_/g,' ')}</div></div>
@@ -888,7 +909,7 @@ function renderDashboard() {
               <td>${jtBadge(j.jobTypeId)}</td>
               <td>${statusBadge(j.status)}</td>
               <td>${Math.floor(ageMs(j)/3600000)}h</td>
-              <td>${j.dueDate||'—'}</td>
+              <td>${j.dueDate||'—'}${dueBadge(j)}</td>
               <td>${(j.assignedAssocNames||[]).join(', ')||j.assignedManagerName||'—'}</td>
               <td><button class="btn btn-primary btn-sm" onclick="openJobModal('${j.id}')">View</button></td>
             </tr>`).join('') : '<tr><td colspan="7" class="empty-state">No open jobs</td></tr>'}
@@ -1144,7 +1165,7 @@ function renderJobRows(jobs) {
     <td><span style="font-weight:700;color:var(--primary);font-size:12px;white-space:nowrap">${j.jobNumber||''}</span></td>
     <td>${j.customerId}</td>
     <td>${jtBadge(j.jobTypeId)}</td>
-    <td>${statusBadge(j.status)}${(j.locations||[]).length ? `<span style="font-size:11px;color:var(--text-light);margin-left:5px">${(j.locations||[]).filter(l=>l.status==='done').length}/${(j.locations||[]).length}</span>` : ''}</td>
+    <td>${statusBadge(j.status)}${dueBadge(j)}${(j.locations||[]).length ? `<span style="font-size:11px;color:var(--text-light);margin-left:5px">${(j.locations||[]).filter(l=>l.status==='done').length}/${(j.locations||[]).length}</span>` : ''}</td>
     <td>${j.billable?'✅':'❌'}</td>
     <td>${fmtDate(j.createdAt)}</td>
     <td>${j.createdByName||'—'}</td>
@@ -1241,7 +1262,7 @@ function renderMyJobs() {
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <div>
               <div style="font-weight:700">${j.jobNumber?`<span style="color:var(--primary);font-size:12px;margin-right:6px">${j.jobNumber}</span>`:''}${j.customerId} — ${jobTypeName(j.jobTypeId)}</div>
-              <div style="font-size:12px;color:var(--text-light)">Due: ${j.dueDate||'—'} | ${statusBadge(j.status)}</div>
+              <div style="font-size:12px;color:var(--text-light)">Due: ${j.dueDate||'—'}${dueBadge(j)} | ${statusBadge(j.status)}</div>
             </div>
             <div style="display:flex;gap:8px">
               ${(j.assignedAssocId||[]).includes(uid)||j.createdBy===uid?
@@ -3038,6 +3059,8 @@ async function openJobModal(jobId) {
         </label>` : ''}
       ${(job.locations||[]).length && (state.user.role==='admin'||state.user.role==='manager')?
         `<button class="btn btn-ghost" onclick="exportJobLocations('${job.id}')">⬇ Export Excel</button>`:''}
+      ${['admin','manager','office_support'].includes(state.user.role) ?
+        `<button class="btn btn-ghost" onclick="cloneJob('${job.id}',this)">⧉ Duplicate</button>` : ''}
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
     </div>`);
 }
@@ -3576,6 +3599,25 @@ async function deleteJob(jobId) {
   }
 }
 
+// ── Clone job ──
+async function cloneJob(jobId, btn) {
+  if (!confirm('Duplicate this job? A new job will be created with the same details and locations (reset to pending).')) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Duplicating…'; }
+  try {
+    const newJob = await apiFetch(`/api/jobs/${jobId}/clone`, { method: 'POST' });
+    // Add to state
+    state.data.jobs.unshift(newJob);
+    // Close current modal
+    document.querySelector('.modal-overlay')?.remove();
+    toast(`Job #${newJob.jobNumber} created as duplicate`, 3000);
+    // Open the new job
+    openJobModal(newJob.id);
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '⧉ Duplicate'; }
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
 // ── Analytics filter ──
 function applyAnalyticsFilter() {
   const customer = document.getElementById('af-customer')?.value || '';
@@ -3654,6 +3696,19 @@ function applyJobsFilter() {
 
   state.jobsPage = 0;
   window._filteredJobs = jobs;
+  _renderJobsPage();
+}
+
+function navToJobsFilter(which) {
+  state.view = 'jobs';
+  sessionStorage.setItem('wh_last_view', 'jobs');
+  renderNav();
+  renderView(); // renders All Jobs DOM + sets _filteredJobs = null
+  const jobs = state.data.jobs;
+  window._filteredJobs = which === 'overdue'
+    ? jobs.filter(isOverdue)
+    : jobs.filter(isDueToday);
+  state.jobsPage = 0;
   _renderJobsPage();
 }
 
@@ -4058,7 +4113,7 @@ Object.assign(window, {
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
   exportJobLocations, uploadLocationsToJob,
-  deleteJob, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
+  deleteJob, cloneJob, navToJobsFilter, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
   updateSelfLogFields, updateCreateJobFields,
   debounceFilterActivityLog, applyDataRefresh,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,

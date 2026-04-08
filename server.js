@@ -374,6 +374,48 @@ async function sendInviteEmail(toEmail, resetLink, displayName, appUrl) {
   }
 }
 
+// ─── Assignment Email ─────────────────────────────────────────────────────────
+async function sendAssignmentEmail(toEmail, toName, job, appUrl, role) {
+  const transport = createMailTransport();
+  if (!transport) {
+    console.warn('[sendAssignmentEmail] SMTP not configured — skipping');
+    return { sent: false };
+  }
+  const roleLabel  = role === 'manager' ? 'manager' : 'associate';
+  const jobLabel   = `${job.jobNumber || ''} — ${job.customerId}`.trim();
+  const dueStr     = job.dueDate || 'No due date set';
+  const greeting   = toName ? `Hi ${toName},` : 'Hi,';
+  try {
+    await transport.sendMail({
+      from: `"eShipper+ Warehouse" <${process.env.SMTP_USER}>`,
+      to: toEmail,
+      subject: `Job assigned to you: ${jobLabel}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px">
+          <h2 style="margin:0 0 16px;color:#1a1a2e">You've been assigned to a job</h2>
+          <p style="color:#374151">${greeting}</p>
+          <p style="color:#374151">You have been assigned as <strong>${roleLabel}</strong> to the following job:</p>
+          <div style="background:#f7f8fc;border-radius:8px;padding:20px 24px;margin:20px 0">
+            <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:#1a1a2e">${jobLabel}</p>
+            <p style="margin:0;font-size:14px;color:#374151"><strong>Due Date:</strong> ${dueStr}</p>
+            ${job.instructions ? `<p style="margin:10px 0 0;font-size:13px;color:#374151;background:#f0fff4;padding:8px;border-radius:5px">${job.instructions}</p>` : ''}
+          </div>
+          <div style="text-align:center;margin:24px 0">
+            <a href="${appUrl}" style="background:#4f46e5;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px;display:inline-block">Open App</a>
+          </div>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
+          <p style="color:#9ca3af;font-size:12px">eShipper+ Warehouse Billing System</p>
+        </div>`,
+      text: `${greeting}\n\nYou have been assigned as ${roleLabel} to: ${jobLabel}\nDue: ${dueStr}\n\nOpen the app: ${appUrl}`,
+    });
+    console.log(`[sendAssignmentEmail] Sent to ${toEmail}`);
+    return { sent: true };
+  } catch (err) {
+    console.error(`[sendAssignmentEmail] Error sending to ${toEmail}:`, err.message);
+    return { sent: false, reason: err.message };
+  }
+}
+
 // ─── Universal Transaction Log ────────────────────────────────────────────────
 // Writes to wh_logs — covers jobs, users, config, templates, teams
 async function writeLog({ action, entity, entityId, entityLabel, uid, name, email, role, changes, metadata }) {
@@ -666,6 +708,16 @@ app.put('/api/jobs/:id/assign-manager', requireAuth, requireRole('manager', 'adm
       entityLabel: `${before.jobNumber || req.params.id} · ${before.customerId}`,
       uid, name: user.displayName, email: user.email, role: user.role,
       metadata: { assignedManager: mgrSnap.data().displayName } });
+
+    // Email the newly assigned manager (fire-and-forget)
+    if (managerId !== before.assignedManagerId) {
+      const mgrEmail = mgrSnap.data().email;
+      if (mgrEmail) {
+        const appUrl = `${req.protocol}://${req.get('host')}`;
+        sendAssignmentEmail(mgrEmail, mgrSnap.data().displayName, { ...before, ...update }, appUrl, 'manager').catch(() => {});
+      }
+    }
+
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT assign-manager error:', err);
@@ -706,6 +758,19 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
       entityLabel: `${before.jobNumber || req.params.id} · ${before.customerId}`,
       uid, name: user.displayName, email: user.email, role: user.role,
       metadata: { associates: validAssocs.map(s => s.data().displayName) } });
+
+    // Email only newly added associates (fire-and-forget)
+    const prevAssocIds = new Set(before.assignedAssocId || []);
+    const newlyAdded = validAssocs.filter(s => !prevAssocIds.has(s.id));
+    if (newlyAdded.length > 0) {
+      const appUrl = `${req.protocol}://${req.get('host')}`;
+      const jobForEmail = { ...before, ...update };
+      for (const s of newlyAdded) {
+        const d = s.data();
+        if (d.email) sendAssignmentEmail(d.email, d.displayName, jobForEmail, appUrl, 'associate').catch(() => {});
+      }
+    }
+
     res.json({ id: req.params.id, ...before, ...update });
   } catch (err) {
     console.error('PUT assign-associate error:', err);
@@ -906,6 +971,77 @@ app.delete('/api/jobs/:id', requireAuth, requireRole('admin'), async (req, res) 
     res.json({ deleted: true });
   } catch (err) {
     console.error('DELETE /api/jobs/:id error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Clone Job ────────────────────────────────────────────────────────────────
+app.post('/api/jobs/:id/clone', requireAuth, requireRole('admin', 'manager', 'office_support'), async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const srcSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!srcSnap.exists) return res.status(404).json({ error: 'Job not found' });
+
+    const src = srcSnap.data();
+
+    // New job number
+    const jobNumber = await getNextJobNumber();
+
+    // Reset each location to pending, remove assignee/done fields
+    const clonedLocations = (src.locations || []).map(loc => ({
+      id: loc.id,
+      label: loc.label || '',
+      barcode: loc.barcode || '',
+      status: 'pending',
+      assignedTo: null,
+      assignedToName: null,
+      doneAt: null,
+      doneBy: null,
+      doneByName: null,
+      photoUrl: null,
+    }));
+
+    const now = Timestamp.now();
+    const newJob = {
+      jobNumber,
+      jobTypeId:   src.jobTypeId   || '',
+      customerId:  src.customerId  || '',
+      fields:      { ...(src.fields || {}) },
+      billable:    src.billable    !== undefined ? src.billable : true,
+      dueDate:     src.dueDate     || null,
+      instructions: src.instructions || '',
+      notes:       src.notes       || '',
+      locations:   clonedLocations,
+      status:      'created',
+      // clear assignments
+      assignedManagerId:   null,
+      assignedManagerName: null,
+      assignedAssocId:     [],
+      assignedAssocNames:  [],
+      // clear financials
+      revenue: 0, cost: 0, profit: 0, marginPct: 0, rating: null,
+      // audit
+      createdBy:     uid,
+      createdByName: user.displayName,
+      createdAt:     now,
+      updatedBy:     uid,
+      updatedByName: user.displayName,
+      updatedAt:     now,
+      clonedFrom:    req.params.id,
+    };
+
+    const ref = await db.collection('wh_jobs').add(newJob);
+    const created = { id: ref.id, ...newJob };
+
+    await writeLog({
+      action: 'job.cloned', entity: 'job', entityId: ref.id,
+      entityLabel: `${jobNumber} (cloned from ${src.jobNumber || req.params.id})`,
+      uid, name: user.displayName, email: user.email, role: user.role,
+    });
+
+    res.json(created);
+  } catch (err) {
+    console.error('POST /api/jobs/:id/clone error:', err);
     res.status(500).json({ error: err.message });
   }
 });
