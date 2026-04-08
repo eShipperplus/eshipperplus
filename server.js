@@ -387,6 +387,12 @@ app.get('/api/init', requireAuth, async (req, res) => {
 
     const payload = { user, jobs, customers, jobTypes, rateCards, targets };
 
+    // Manager + Admin: include templates
+    if (user.role === 'admin' || user.role === 'manager') {
+      const templatesSnap = await db.collection('wh_templates').orderBy('createdAt', 'desc').get();
+      payload.templates = templatesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+
     // Admin-only: include all users and teams
     if (user.role === 'admin') {
       const [usersSnap, teamsSnap] = await Promise.all([
@@ -1275,6 +1281,66 @@ app.delete('/api/teams/:id', requireAuth, requireRole('admin'), async (req, res)
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Templates ────────────────────────────────────────────────────────────────
+
+app.get('/api/templates', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
+  try {
+    const snap = await db.collection('wh_templates').orderBy('createdAt', 'desc').get();
+    res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/templates', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
+  try {
+    const { name, jobTypeId, customerId, assignedManagerId, billable,
+            dueDaysOffset, instructions, notes, locations, csvCaptureFields } = req.body;
+    if (!name || !jobTypeId || !customerId) return res.status(400).json({ error: 'name, jobTypeId, customerId required' });
+    const now = Timestamp.now();
+    const ref = await db.collection('wh_templates').add({
+      name, jobTypeId, customerId,
+      assignedManagerId: assignedManagerId || null,
+      billable: billable ?? true,
+      dueDaysOffset: dueDaysOffset ?? null,
+      instructions: instructions || '',
+      notes: notes || '',
+      locations: (locations || []).map(l => ({ name: l.name, instructions: l.instructions || '', referenceData: l.referenceData || {} })),
+      csvCaptureFields: csvCaptureFields || [],
+      createdBy: req.uid,
+      createdByName: req.user.displayName || '',
+      createdAt: now,
+      updatedAt: now,
+    });
+    res.json({ id: ref.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/templates/:id', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
+  try {
+    const { name, jobTypeId, customerId, assignedManagerId, billable,
+            dueDaysOffset, instructions, notes, locations, csvCaptureFields } = req.body;
+    const updates = {
+      name, jobTypeId, customerId,
+      assignedManagerId: assignedManagerId || null,
+      billable: billable ?? true,
+      dueDaysOffset: dueDaysOffset ?? null,
+      instructions: instructions || '',
+      notes: notes || '',
+      locations: (locations || []).map(l => ({ name: l.name, instructions: l.instructions || '', referenceData: l.referenceData || {} })),
+      csvCaptureFields: csvCaptureFields || [],
+      updatedAt: Timestamp.now(),
+    };
+    await db.collection('wh_templates').doc(req.params.id).update(updates);
+    res.json({ updated: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/templates/:id', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
+  try {
+    await db.collection('wh_templates').doc(req.params.id).delete();
+    res.json({ deleted: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── SPA Fallback ─────────────────────────────────────────────────────────────
