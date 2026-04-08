@@ -315,7 +315,7 @@ function createMailTransport() {
   });
 }
 
-async function sendInviteEmail(toEmail, resetLink, displayName) {
+async function sendInviteEmail(toEmail, resetLink, displayName, appUrl) {
   const transport = createMailTransport();
   if (!transport) {
     console.error('[sendInviteEmail] SMTP_USER/SMTP_PASS not configured — cannot send email');
@@ -335,18 +335,36 @@ async function sendInviteEmail(toEmail, resetLink, displayName) {
         <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px">
           <h2 style="margin:0 0 16px;color:#1a1a2e">Welcome to eShipper+ Warehouse Billing</h2>
           <p style="color:#374151">${greeting}</p>
-          <p style="color:#374151">An admin has created an account for you. Click the button below to set your password and get started.</p>
-          <div style="text-align:center;margin:32px 0">
-            <a href="${resetLink}" style="background:#4f46e5;color:#fff;padding:14px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px">
-              Set My Password
-            </a>
+          <p style="color:#374151">An admin has created an account for you on the eShipper+ Warehouse Billing system.</p>
+          <p style="color:#374151;margin-top:0">Follow these two steps to get started:</p>
+
+          <div style="background:#f7f8fc;border-radius:8px;padding:20px 24px;margin:24px 0">
+            <p style="margin:0 0 12px;font-weight:600;color:#1a1a2e">Step 1 — Set your password</p>
+            <p style="margin:0 0 16px;color:#374151;font-size:14px">Click the button below to choose your password. This link expires in <strong>1 hour</strong>.</p>
+            <div style="text-align:center">
+              <a href="${resetLink}" style="background:#4f46e5;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px;display:inline-block">
+                Set My Password
+              </a>
+            </div>
           </div>
-          <p style="color:#6b7280;font-size:13px">This link expires in 1 hour. If you did not expect this invitation, you can ignore this email.</p>
+
+          <div style="background:#f7f8fc;border-radius:8px;padding:20px 24px;margin:24px 0">
+            <p style="margin:0 0 12px;font-weight:600;color:#1a1a2e">Step 2 — Log in to the app</p>
+            <p style="margin:0 0 16px;color:#374151;font-size:14px">After setting your password, sign in here using your email <strong>${toEmail}</strong>:</p>
+            <div style="text-align:center">
+              <a href="${appUrl}" style="background:#059669;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px;display:inline-block">
+                Open App
+              </a>
+            </div>
+            <p style="margin:12px 0 0;color:#6b7280;font-size:12px;text-align:center">${appUrl}</p>
+          </div>
+
+          <p style="color:#6b7280;font-size:13px">If you did not expect this invitation, you can ignore this email.</p>
           <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
           <p style="color:#9ca3af;font-size:12px">eShipper+ Warehouse Billing System</p>
         </div>
       `,
-      text: `${greeting}\n\nYou have been invited to eShipper+ Warehouse Billing. Set your password here:\n${resetLink}\n\nThis link expires in 1 hour.`,
+      text: `${greeting}\n\nYou have been invited to eShipper+ Warehouse Billing.\n\nStep 1 — Set your password (link expires in 1 hour):\n${resetLink}\n\nStep 2 — Log in to the app:\n${appUrl}\n\nYour login email is: ${toEmail}`,
     });
     console.log(`[sendInviteEmail] Successfully sent invite to ${toEmail}`);
     return { sent: true };
@@ -1282,7 +1300,7 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
       // Generate password-set link then email it
       const resetLink = await auth.generatePasswordResetLink(emailKey).catch(e => { console.error('resetLink error:', e.message); return null; });
       const emailResult = resetLink
-        ? await sendInviteEmail(emailKey, resetLink, nameToUse || displayName)
+        ? await sendInviteEmail(emailKey, resetLink, nameToUse || displayName, `${req.protocol}://${req.get('host')}`)
         : { sent: false, reason: 'no_reset_link' };
       console.log('[invite/update] emailResult:', emailResult);
       return res.json({ status: 'updated', uid: existingDoc.id, resetLink, emailSent: emailResult.sent, emailError: emailResult.reason || null });
@@ -1314,7 +1332,7 @@ app.post('/api/users/invite', requireAuth, requireRole('admin'), async (req, res
     // Generate password-set link then email it
     const resetLink = await auth.generatePasswordResetLink(emailKey).catch(e => { console.error('resetLink error:', e.message); return null; });
     const emailResult = resetLink
-      ? await sendInviteEmail(emailKey, resetLink, nameToUse)
+      ? await sendInviteEmail(emailKey, resetLink, nameToUse, `${req.protocol}://${req.get('host')}`)
       : { sent: false, reason: 'no_reset_link' };
     console.log('[invite/new] emailResult:', emailResult);
 
