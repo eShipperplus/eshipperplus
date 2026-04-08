@@ -20,10 +20,23 @@ jobs:
 
       - name: Build and push container image
         run: |
-          gcloud builds submit \
+          BUILD_ID=$(gcloud builds submit \
             --config cloudbuild.yaml \
             --project ${{ secrets.GCP_PROJECT_ID }} \
-            --suppress-logs
+            --async \
+            --format="value(id)")
+          echo "Build ID: $BUILD_ID"
+          for i in $(seq 1 60); do
+            STATUS=$(gcloud builds describe "$BUILD_ID" \
+              --project ${{ secrets.GCP_PROJECT_ID }} \
+              --format="value(status)")
+            echo "[$i/60] Status: $STATUS"
+            if [ "$STATUS" = "SUCCESS" ]; then echo "Build succeeded"; break; fi
+            if [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "CANCELLED" ] || [ "$STATUS" = "TIMEOUT" ]; then
+              echo "Build failed with status: $STATUS"; exit 1
+            fi
+            sleep 20
+          done
 
       - name: Deploy Firestore indexes
         env:
