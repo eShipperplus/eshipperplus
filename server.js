@@ -608,7 +608,8 @@ app.put('/api/jobs/:id/locations', requireAuth, requireRole('manager', 'admin'),
     const existing = job.locations || [];
     const merged = locations.map(l => {
       const prev = existing.find(e => e.id === l.id) || {};
-      return { ...prev, ...l };
+      // New locations (not in existing) get sensible defaults
+      return { status: 'pending', capturedData: {}, assocNotes: '', photos: [], ...prev, ...l };
     });
     // Build full assignedAssocId list from locations
     const assocIds = [...new Set(merged.map(l => l.assignedAssocId).filter(Boolean))];
@@ -1312,7 +1313,7 @@ app.post('/api/templates', requireAuth, requireRole('manager', 'admin'), async (
       createdAt: now,
       updatedAt: now,
     });
-    res.json({ id: ref.id });
+    res.status(201).json({ id: ref.id });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1349,5 +1350,9 @@ app.get('*', (req, res) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Warehouse Billing server listening on port ${PORT}`));
+if (require.main === module) {
+  const PORT = process.env.PORT || 8080;
+  app.listen(PORT, () => console.log(`Warehouse Billing server listening on port ${PORT}`));
+}
+
+module.exports = { app };
