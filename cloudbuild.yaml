@@ -15,3 +15,4 @@ steps:
       - --allow-unauthenticated
 images:
   - 'northamerica-northeast2-docker.pkg.dev/$PROJECT_ID/warehouse-billing/warehouse-billing'
+# trigger
