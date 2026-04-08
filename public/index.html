@@ -778,10 +778,104 @@ function renderDashboard() {
     </div>`;
 }
 
+// ── Analytics helpers ──
+function getJobDate(j) {
+  return j.completedAt ? (j.completedAt.toDate ? j.completedAt.toDate() : new Date(j.completedAt._seconds*1000)) : null;
+}
+
+function analyticsKPIs(jobs) {
+  const rev    = jobs.reduce((s,j) => s+(j.revenue||0), 0);
+  const cost   = jobs.reduce((s,j) => s+(j.cost||0), 0);
+  const profit = jobs.reduce((s,j) => s+(j.profit||0), 0);
+  const margins = jobs.filter(j => j.marginPct != null).map(j => j.marginPct);
+  const avgMargin = margins.length ? margins.reduce((s,m) => s+m, 0)/margins.length : null;
+  return { rev, cost, profit, avgMargin, count: jobs.length };
+}
+
+function renderAnalyticsKPICards(curr, prior, periodLabel) {
+  function delta(c, p, isMoney=true) {
+    if (!p) return '';
+    const diff = c - p, pct = Math.abs((diff/p)*100).toFixed(0);
+    const up = diff >= 0, col = up ? '#276749' : '#c53030';
+    return `<div style="font-size:11px;color:${col};font-weight:600;margin-top:3px">${up?'↑':'↓'} ${isMoney?fmt(Math.abs(diff)):Math.abs(diff).toFixed(1)+'%'} vs prior (${up?'+':''}${pct}%)</div>`;
+  }
+  const kpis = [
+    { val: fmt(curr.rev),    lbl: 'Revenue',        d: delta(curr.rev,    prior.rev)    },
+    { val: fmt(curr.cost),   lbl: 'Cost',           d: delta(curr.cost,   prior.cost)   },
+    { val: fmt(curr.profit), lbl: 'Gross Profit',   d: delta(curr.profit, prior.profit) },
+    { val: curr.avgMargin!=null ? curr.avgMargin.toFixed(1)+'%' : '—', lbl:'Avg Margin',
+      d: curr.avgMargin!=null && prior.avgMargin!=null ? delta(curr.avgMargin, prior.avgMargin, false) : '' },
+    { val: curr.count, lbl: 'Jobs Completed',       d: delta(curr.count,  prior.count, false) },
+  ];
+  return kpis.map(k=>`<div class="kpi"><div class="val">${k.val}</div><div class="lbl">${k.lbl}</div>${k.d}</div>`).join('');
+}
+
+function renderRatingTrendChart(jobs) {
+  const now = new Date();
+  const weeks = [];
+  for (let i = 7; i >= 0; i--) {
+    const wEnd   = new Date(now.getTime() - i * 7*24*3600000);
+    const wStart = new Date(wEnd.getTime() - 7*24*3600000);
+    const wJobs  = jobs.filter(j => { const d=getJobDate(j); return d && d>=wStart && d<wEnd; });
+    weeks.push({
+      label: wStart.toLocaleDateString('en-CA', { month:'short', day:'numeric' }),
+      great: wJobs.filter(j=>j.rating==='great').length,
+      good:  wJobs.filter(j=>j.rating==='good').length,
+      needs: wJobs.filter(j=>j.rating==='needs_improvement').length,
+    });
+  }
+  const maxTotal = Math.max(...weeks.map(w=>w.great+w.good+w.needs), 1);
+  const MAX_H = 160;
+  const hasData = weeks.some(w=>w.great+w.good+w.needs>0);
+
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin:0">Weekly Rating Trend — Last 8 Weeks</div>
+      <div style="display:flex;gap:14px;font-size:12px">
+        <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#c6f6d5;margin-right:4px;vertical-align:middle"></span>Great</span>
+        <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#bee3f8;margin-right:4px;vertical-align:middle"></span>Good</span>
+        <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#fed7d7;margin-right:4px;vertical-align:middle"></span>Needs Work</span>
+      </div>
+    </div>
+    ${!hasData ? '<div class="empty-state">No rated jobs in the last 8 weeks</div>' : `
+    <div style="display:flex;align-items:flex-end;gap:6px;height:${MAX_H}px">
+      ${weeks.map(w => {
+        const total = w.great+w.good+w.needs;
+        if (!total) return `<div style="flex:1;height:100%;display:flex;align-items:flex-end">
+          <div style="width:100%;height:2px;background:#eee;border-radius:2px"></div></div>`;
+        const barH  = Math.round(total/maxTotal*MAX_H);
+        const greatH = Math.round(w.great/total*barH);
+        const goodH  = Math.round(w.good/total*barH);
+        const needsH = barH - greatH - goodH;
+        return `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%"
+            title="${total} job${total!==1?'s':''} · ${w.great} Great, ${w.good} Good, ${w.needs} Needs Work">
+          <div style="display:flex;flex-direction:column;border-radius:3px 3px 0 0;overflow:hidden">
+            ${needsH>0?`<div style="height:${needsH}px;background:#fed7d7"></div>`:''}
+            ${goodH>0 ?`<div style="height:${goodH}px;background:#bee3f8"></div>`:''}
+            ${greatH>0?`<div style="height:${greatH}px;background:#c6f6d5"></div>`:''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      ${weeks.map(w=>`<div style="flex:1;text-align:center;font-size:10px;color:var(--text-light)">${w.label}</div>`).join('')}
+    </div>`}
+  </div>`;
+}
+
 // ── Analytics ──
 function renderAnalytics() {
-  const jobs = state.data.jobs.filter(j => j.status === 'completed');
+  const allCompleted = state.data.jobs.filter(j => j.status === 'completed');
+
+  // Default KPI period: last 30 days vs prior 30 days
+  const now = new Date();
+  const d30 = new Date(now.getTime() - 30*24*3600000);
+  const d60 = new Date(now.getTime() - 60*24*3600000);
+  const currJobs  = allCompleted.filter(j => { const d=getJobDate(j); return d && d>=d30; });
+  const priorJobs = allCompleted.filter(j => { const d=getJobDate(j); return d && d>=d60 && d<d30; });
+
   // Build associate breakdown
+  const jobs = allCompleted;
   const assocMap = {};
   jobs.forEach(j => {
     const jobTarget = (state.data.targets?.[j.jobTypeId]?.targetMarginPct) ?? null;
@@ -816,8 +910,13 @@ function renderAnalytics() {
         <div class="form-group"><label>From</label><input type="date" id="af-from"/></div>
         <div class="form-group"><label>To</label><input type="date" id="af-to"/></div>
         <button class="btn btn-primary" onclick="applyAnalyticsFilter()">Apply</button>
+        <span id="analytics-period-label" style="font-size:12px;color:var(--text-light);align-self:center">Showing: Last 30 days vs prior 30 days</span>
       </div>
     </div>
+    <div class="kpi-row" id="analytics-kpis">
+      ${renderAnalyticsKPICards(analyticsKPIs(currJobs), analyticsKPIs(priorJobs))}
+    </div>
+    ${renderRatingTrendChart(allCompleted)}
     <div class="card">
       <div class="card-title">Associate Breakdown</div>
       <div class="tbl-wrap">
@@ -2553,19 +2652,61 @@ async function deleteJob(jobId) {
 
 // ── Analytics filter ──
 function applyAnalyticsFilter() {
-  const customer = document.getElementById('af-customer')?.value;
-  const type = document.getElementById('af-type')?.value;
-  const from = document.getElementById('af-from')?.value;
-  const to = document.getElementById('af-to')?.value;
+  const customer = document.getElementById('af-customer')?.value || '';
+  const type     = document.getElementById('af-type')?.value || '';
+  const from     = document.getElementById('af-from')?.value || '';
+  const to       = document.getElementById('af-to')?.value || '';
 
-  let jobs = state.data.jobs.filter(j => j.status === 'completed');
-  if (customer) jobs = jobs.filter(j => j.customerId === customer);
-  if (type) jobs = jobs.filter(j => j.jobTypeId === type);
-  if (from) jobs = jobs.filter(j => { const d = j.completedAt ? (j.completedAt.toDate?j.completedAt.toDate():new Date(j.completedAt._seconds*1000)) : null; return d && d >= new Date(from); });
-  if (to) jobs = jobs.filter(j => { const d = j.completedAt ? (j.completedAt.toDate?j.completedAt.toDate():new Date(j.completedAt._seconds*1000)) : null; return d && d <= new Date(to + 'T23:59:59'); });
+  let base = state.data.jobs.filter(j => j.status === 'completed');
+  if (customer) base = base.filter(j => j.customerId === j.customerId && j.customerId === customer);
+  if (type)     base = base.filter(j => j.jobTypeId === type);
 
+  const now = new Date();
+  let fromDate = from ? new Date(from) : null;
+  let toDate   = to   ? new Date(to + 'T23:59:59') : null;
+  let periodLabel = 'Last 30 days vs prior 30 days';
+
+  let currJobs, priorJobs;
+
+  if (fromDate && toDate) {
+    const duration = toDate - fromDate;
+    currJobs  = base.filter(j => { const d=getJobDate(j); return d && d>=fromDate && d<=toDate; });
+    priorJobs = base.filter(j => { const d=getJobDate(j); return d && d>=new Date(fromDate-duration) && d<fromDate; });
+    periodLabel = `${from} → ${to} vs prior ${Math.round(duration/86400000)} days`;
+  } else if (fromDate) {
+    const duration = now - fromDate;
+    currJobs  = base.filter(j => { const d=getJobDate(j); return d && d>=fromDate; });
+    priorJobs = base.filter(j => { const d=getJobDate(j); return d && d>=new Date(fromDate-duration) && d<fromDate; });
+    periodLabel = `Since ${from} vs prior period`;
+  } else if (toDate) {
+    // No from: default to last 30 days ending at toDate
+    const start30 = new Date(toDate - 30*86400000);
+    const start60 = new Date(toDate - 60*86400000);
+    currJobs  = base.filter(j => { const d=getJobDate(j); return d && d>=start30 && d<=toDate; });
+    priorJobs = base.filter(j => { const d=getJobDate(j); return d && d>=start60 && d<start30; });
+    periodLabel = `30 days to ${to} vs prior 30 days`;
+  } else {
+    const d30 = new Date(now.getTime()-30*86400000);
+    const d60 = new Date(now.getTime()-60*86400000);
+    currJobs  = base.filter(j => { const d=getJobDate(j); return d && d>=d30; });
+    priorJobs = base.filter(j => { const d=getJobDate(j); return d && d>=d60 && d<d30; });
+  }
+
+  // Update KPI cards
+  const kpiEl = document.getElementById('analytics-kpis');
+  if (kpiEl) kpiEl.innerHTML = renderAnalyticsKPICards(analyticsKPIs(currJobs), analyticsKPIs(priorJobs));
+  const lblEl = document.getElementById('analytics-period-label');
+  if (lblEl) lblEl.textContent = 'Showing: ' + periodLabel;
+
+  // Update jobs table (show all base-filtered jobs, not just date window)
+  const allFiltered = from||to
+    ? base.filter(j => {
+        const d = getJobDate(j);
+        return d && (!fromDate||d>=fromDate) && (!toDate||d<=toDate);
+      })
+    : base;
   const tbody = document.querySelector('#analytics-jobs-table tbody');
-  if (tbody) tbody.innerHTML = renderAnalyticsJobRows(jobs);
+  if (tbody) tbody.innerHTML = renderAnalyticsJobRows(allFiltered);
 }
 
 // ── Jobs filter ──
