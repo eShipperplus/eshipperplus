@@ -45,7 +45,7 @@ button { cursor: pointer; border: none; font-family: inherit; }
 #sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 11px 20px; color: rgba(255,255,255,0.75); font-size: 14px; transition: background 0.15s; }
 #sidebar nav a:hover, #sidebar nav a.active { background: rgba(255,255,255,0.10); color: #fff; }
 #sidebar nav a .icon { font-size: 18px; width: 22px; text-align: center; }
-#content { flex: 1; padding: 20px; overflow-y: auto; max-width: 1400px; }
+#content { flex: 1; padding: 20px; overflow-y: auto; }
 
 /* ── Cards / Panels ── */
 .card { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px; }
@@ -3070,8 +3070,6 @@ async function openJobModal(jobId) {
         </label>` : ''}
       ${(job.locations||[]).length && (state.user.role==='admin'||state.user.role==='manager')?
         `<button class="btn btn-ghost" onclick="exportJobLocations('${job.id}')">⬇ Export Excel</button>`:''}
-      ${['admin','manager','office_support'].includes(state.user.role) ?
-        `<button class="btn btn-ghost" onclick="cloneJob('${job.id}',this)">⧉ Duplicate</button>` : ''}
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
     </div>`);
 }
