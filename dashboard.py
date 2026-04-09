@@ -102,6 +102,7 @@ SELECT
     so.Code                          AS ShipmentOrderCode,
     COALESCE(c.FullName, c.DisplayName) AS ClientName,
     c.DisplayName                    AS ClientDisplayName,
+    sot.Name                         AS OrderType,
     pack.WaveNo,
     pack.WarehouseId,
     MIN(pick.CreatedDateTime)        AS AllocationDate,
@@ -135,7 +136,7 @@ WHERE pack.WarehouseTaskTypeId      = 6               -- Packing
 
 GROUP BY
     pack.Id, pack.ShipmentOrderId, so.Code,
-    COALESCE(c.FullName, c.DisplayName), c.DisplayName, pack.WaveNo,
+    COALESCE(c.FullName, c.DisplayName), c.DisplayName, sot.Name, pack.WaveNo,
     pack.WarehouseId, pack.WarehouseTaskStatusId
 """
 
@@ -154,6 +155,7 @@ SELECT
     so.Code                          AS ShipmentOrderCode,
     COALESCE(c.FullName, c.DisplayName) AS ClientName,
     c.DisplayName                    AS ClientDisplayName,
+    sot.Name                         AS OrderType,
     wt.WaveNo,
     wt.WarehouseId,
     wt.CreatedDateTime               AS AllocationDate,
@@ -1431,12 +1433,25 @@ body{{background:#f1f5f9;color:#1e293b;font-family:"Segoe UI",system-ui,sans-ser
 </div>
 <script>
 var KPI_DATA={kpi_data_json};
-function showKpi(key){{
-  var d=KPI_DATA[key];if(!d)return;
-  document.getElementById('kpiModalTitle').textContent=d.title+' ('+d.rows.length+' orders)';
+var _kpiState={{}};
+function _renderKpiTable(key){{
+  var d=KPI_DATA[key];
+  var st=_kpiState[key]||{{col:-1,asc:true}};
   var urg={{"Past SLA":"#dc2626","Breaching SLA":"#d97706","On Track":"#16a34a"}};
-  var th='<tr>'+d.cols.map(function(c){{return'<th>'+c+'</th>';}}).join('')+'</tr>';
-  var tb=d.rows.map(function(r){{
+  var rows=d.rows.slice();
+  if(st.col>=0){{
+    rows.sort(function(a,b){{
+      var av=a[st.col]||'',bv=b[st.col]||'';
+      var an=parseFloat(av),bn=parseFloat(bv);
+      var cmp=(!isNaN(an)&&!isNaN(bn))?(an-bn):av.localeCompare(bv);
+      return st.asc?cmp:-cmp;
+    }});
+  }}
+  var th='<tr>'+d.cols.map(function(c,i){{
+    var arrow=st.col===i?(st.asc?' ▲':' ▼'):'';
+    return'<th style="cursor:pointer;user-select:none" onclick="javascript:_sortKpi(\''+key+'\','+i+')">'+c+arrow+'</th>';
+  }}).join('')+'</tr>';
+  var tb=rows.map(function(r){{
     var cells=r.map(function(v,i){{
       if(d.cols[i]==='Urgency'){{
         var col=urg[v]||'#64748b';
@@ -1448,6 +1463,16 @@ function showKpi(key){{
   }}).join('');
   document.getElementById('kpiModalBody').innerHTML=
     '<div style="overflow-x:auto"><table class="qtable" style="width:100%"><thead>'+th+'</thead><tbody>'+tb+'</tbody></table></div>';
+}}
+function _sortKpi(key,col){{
+  var st=_kpiState[key]||{{col:-1,asc:true}};
+  _kpiState[key]={{col:col,asc:st.col===col?!st.asc:true}};
+  _renderKpiTable(key);
+}}
+function showKpi(key){{
+  var d=KPI_DATA[key];if(!d)return;
+  document.getElementById('kpiModalTitle').textContent=d.title+' ('+d.rows.length+' orders)';
+  _renderKpiTable(key);
   new bootstrap.Modal(document.getElementById('kpiModal')).show();
 }}
 var s={REFRESH_SECS};
