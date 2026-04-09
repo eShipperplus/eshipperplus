@@ -247,6 +247,9 @@ tr:hover td { background: #f0f4ff; }
   <div id="mobile-nav"></div>
 </div>
 
+<!-- SheetJS for client-side Excel export -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
@@ -1124,7 +1127,10 @@ function renderAllJobs() {
   const pageJobs = jobs.slice(page * JOBS_PER_PAGE, (page + 1) * JOBS_PER_PAGE);
   return `
     <div class="section-header"><h1>All Jobs</h1>
-      <button class="btn btn-teal btn-sm" onclick="showCreateJobModal()">+ New Job</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="exportJobsExcel(this)">⬇ Export Excel</button>
+        <button class="btn btn-teal btn-sm" onclick="showCreateJobModal()">+ New Job</button>
+      </div>
     </div>
     <div class="card">
       <div class="filter-row">
@@ -1150,6 +1156,12 @@ function renderAllJobs() {
             <option value="__me__">Me</option>
             ${(()=>{const seen=new Map();state.data.jobs.forEach(j=>{if(j.assignedManagerId&&j.assignedManagerName)seen.set(j.assignedManagerId,j.assignedManagerName);(j.assignedAssocId||[]).forEach((id,i)=>{const n=(j.assignedAssocNames||[])[i];if(id&&n)seen.set(id,n);});});return [...seen.entries()].sort((a,b)=>a[1].localeCompare(b[1])).map(([uid,name])=>`<option value="${uid}">${name}</option>`).join('');})()}
           </select>
+        </div>
+        <div class="form-group" style="min-width:120px"><label>Created From</label>
+          <input type="date" id="jf-date-from" style="width:100%"/>
+        </div>
+        <div class="form-group" style="min-width:120px"><label>Created To</label>
+          <input type="date" id="jf-date-to" style="width:100%"/>
         </div>
         <div style="display:flex;gap:6px;align-items:flex-end;padding-bottom:1px">
           <button class="btn btn-primary btn-sm" onclick="applyJobsFilter()">Apply</button>
@@ -3709,6 +3721,8 @@ function applyJobsFilter() {
   const type       = document.getElementById('jf-type')?.value;
   const createdBy  = document.getElementById('jf-created-by')?.value;
   const assignedTo = document.getElementById('jf-assigned-to')?.value;
+  const dateFrom   = document.getElementById('jf-date-from')?.value;  // YYYY-MM-DD
+  const dateTo     = document.getElementById('jf-date-to')?.value;
   const uid = state.user?.uid;
 
   let jobs = state.data.jobs;
@@ -3725,6 +3739,15 @@ function applyJobsFilter() {
       j.assignedManagerId === targetUid ||
       (j.assignedAssocId || []).includes(targetUid)
     );
+  }
+  if (dateFrom || dateTo) {
+    jobs = jobs.filter(j => {
+      const d = fmtDate(j.createdAt); // YYYY-MM-DD via en-CA locale
+      if (d === '—') return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo   && d > dateTo)   return false;
+      return true;
+    });
   }
 
   state.jobsPage = 0;
@@ -3746,7 +3769,7 @@ function navToJobsFilter(which) {
 }
 
 function resetJobsFilter() {
-  ['jf-status','jf-customer','jf-type','jf-created-by','jf-assigned-to'].forEach(id => {
+  ['jf-status','jf-customer','jf-type','jf-created-by','jf-assigned-to','jf-date-from','jf-date-to'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -4138,6 +4161,67 @@ async function exportCSV() {
   }
 }
 
+// ── Jobs Excel export (client-side, respects active filters) ──
+function exportJobsExcel(btn) {
+  try {
+    if (typeof XLSX === 'undefined') { toast('Excel library not loaded yet, try again in a moment', 3000); return; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+
+    const jobs = window._filteredJobs || state.data.jobs;
+    if (!jobs.length) { toast('No jobs to export'); if (btn) { btn.disabled = false; btn.textContent = '⬇ Export Excel'; } return; }
+
+    // Build a helper to convert Firestore timestamp → readable string
+    const tsStr = ts => {
+      if (!ts) return '';
+      const d = ts.toDate ? ts.toDate() : new Date(ts._seconds ? ts._seconds * 1000 : ts);
+      return d.toLocaleDateString('en-CA'); // YYYY-MM-DD
+    };
+
+    const jobTypeName = id => (state.data.jobTypes||[]).find(t => t.id === id)?.name || id || '';
+
+    const rows = jobs.map(j => ({
+      'Job #':          j.jobNumber || '',
+      'Customer':       j.customerId || '',
+      'Job Type':       jobTypeName(j.jobTypeId),
+      'Status':         (j.status || '').replace(/_/g, ' '),
+      'Billable':       j.billable ? 'Yes' : 'No',
+      'Created Date':   tsStr(j.createdAt),
+      'Due Date':       j.dueDate || '',
+      'Created By':     j.createdByName || '',
+      'Manager':        j.assignedManagerName || '',
+      'Associates':     (j.assignedAssocNames || []).join(', '),
+      'Locations Total':  (j.locations || []).length,
+      'Locations Done':   (j.locations || []).filter(l => l.status === 'done').length,
+      'Revenue ($)':    j.revenue != null ? Number(j.revenue).toFixed(2) : '',
+      'Cost ($)':       j.cost    != null ? Number(j.cost).toFixed(2)    : '',
+      'Profit ($)':     j.profit  != null ? Number(j.profit).toFixed(2)  : '',
+      'Margin (%)':     j.marginPct != null ? Number(j.marginPct).toFixed(1) : '',
+      'Rating':         j.rating || '',
+      'Completed Date': tsStr(j.completedAt),
+      'Cancelled Date': tsStr(j.cancelledAt),
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+
+    // Auto-fit column widths
+    const colWidths = Object.keys(rows[0]).map(k => ({
+      wch: Math.max(k.length, ...rows.map(r => String(r[k] ?? '').length)) + 2
+    }));
+    ws['!cols'] = colWidths;
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Jobs');
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, `warehouse-jobs-${dateStr}.xlsx`);
+    toast(`Exported ${jobs.length} job${jobs.length === 1 ? '' : 's'}`, 2500);
+  } catch (err) {
+    toast('Export error: ' + err.message, 3000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⬇ Export Excel'; }
+  }
+}
+
 // Expose to onclick handlers
 Object.assign(window, {
   openJobModal, openCompleteModal, submitComplete, assignAssociate,
@@ -4146,7 +4230,7 @@ Object.assign(window, {
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
   exportJobLocations, uploadLocationsToJob,
-  deleteJob, cloneJob, cancelJob, navToJobsFilter, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
+  deleteJob, cloneJob, cancelJob, navToJobsFilter, exportJobsExcel, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
   updateSelfLogFields, updateCreateJobFields,
   debounceFilterActivityLog, applyDataRefresh,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
