@@ -1449,7 +1449,7 @@ function _renderKpiTable(key){{
   }}
   var th='<tr>'+d.cols.map(function(c,i){{
     var arrow=st.col===i?(st.asc?' ▲':' ▼'):'';
-    return'<th style="cursor:pointer;user-select:none" onclick="javascript:_sortKpi(\''+key+'\','+i+')">'+c+arrow+'</th>';
+    return'<th data-col="'+i+'" style="cursor:pointer;user-select:none">'+c+arrow+'</th>';
   }}).join('')+'</tr>';
   var tb=rows.map(function(r){{
     var cells=r.map(function(v,i){{
@@ -1463,6 +1463,9 @@ function _renderKpiTable(key){{
   }}).join('');
   document.getElementById('kpiModalBody').innerHTML=
     '<div style="overflow-x:auto"><table class="qtable" style="width:100%"><thead>'+th+'</thead><tbody>'+tb+'</tbody></table></div>';
+  document.querySelectorAll('#kpiModalBody th[data-col]').forEach(function(th){{
+    th.addEventListener('click',function(){{_sortKpi(key,parseInt(this.getAttribute('data-col')));}});
+  }});
 }}
 function _sortKpi(key,col){{
   var st=_kpiState[key]||{{col:-1,asc:true}};
