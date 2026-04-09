@@ -956,6 +956,40 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
   }
 });
 
+// ─── Cancel Job ───────────────────────────────────────────────────────────────
+app.put('/api/jobs/:id/cancel', requireAuth, requireRole('admin', 'manager', 'office_support'), async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+
+    const job = jobSnap.data();
+    if (job.status === 'completed') return res.status(400).json({ error: 'Completed jobs cannot be cancelled' });
+    if (job.status === 'cancelled') return res.status(400).json({ error: 'Job is already cancelled' });
+
+    const now = Timestamp.now();
+    const update = {
+      status: 'cancelled',
+      cancelledBy: uid,
+      cancelledByName: user.displayName,
+      cancelledAt: now,
+      updatedBy: uid,
+      updatedByName: user.displayName,
+      updatedAt: now,
+    };
+
+    await db.collection('wh_jobs').doc(req.params.id).update(update);
+    await writeAudit(req.params.id, 'cancelled', uid, user.displayName, job, update, user.email);
+    await writeLog({ action: 'job.cancelled', entity: 'job', entityId: req.params.id,
+      entityLabel: `${job.jobNumber || req.params.id} · ${job.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role });
+    res.json({ id: req.params.id, ...job, ...update });
+  } catch (err) {
+    console.error('PUT /api/jobs/:id/cancel error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/jobs/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { user, uid } = req;

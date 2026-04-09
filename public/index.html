@@ -71,8 +71,9 @@ tr:hover td { background: #f0f4ff; }
 .badge-great { background:#c6f6d5; color:#276749; }
 .badge-good { background:#bee3f8; color:#2b6cb0; }
 .badge-needs_improvement { background:#fed7d7; color:#c53030; }
-.badge-overdue  { background:#fed7d7; color:#c53030; }
-.badge-due-today { background:#fefcbf; color:#744210; }
+.badge-overdue    { background:#fed7d7; color:#c53030; }
+.badge-due-today  { background:#fefcbf; color:#744210; }
+.badge-cancelled  { background:#e2e8f0; color:#4a5568; }
 
 /* ── Forms ── */
 .form-group { margin-bottom: 14px; }
@@ -653,8 +654,8 @@ function fmtDate(ts) {
 }
 function statusBadge(s) { return `<span class="badge badge-${s}">${s.replace(/_/g,' ')}</span>`; }
 function ratingBadge(r) { return r ? `<span class="badge badge-${r}">${r.replace(/_/g,' ')}</span>` : '—'; }
-function isOverdue(j)  { if (!j.dueDate || j.status === 'completed') return false; return j.dueDate < new Date().toISOString().split('T')[0]; }
-function isDueToday(j) { if (!j.dueDate || j.status === 'completed') return false; return j.dueDate === new Date().toISOString().split('T')[0]; }
+function isOverdue(j)  { if (!j.dueDate || j.status === 'completed' || j.status === 'cancelled') return false; return j.dueDate < new Date().toISOString().split('T')[0]; }
+function isDueToday(j) { if (!j.dueDate || j.status === 'completed' || j.status === 'cancelled') return false; return j.dueDate === new Date().toISOString().split('T')[0]; }
 function dueBadge(j) {
   if (isOverdue(j))  return `<span class="badge badge-overdue" style="margin-left:4px">Overdue</span>`;
   if (isDueToday(j)) return `<span class="badge badge-due-today" style="margin-left:4px">Due Today</span>`;
@@ -1127,30 +1128,37 @@ function renderAllJobs() {
     </div>
     <div class="card">
       <div class="filter-row">
-        <div class="form-group"><label>View</label>
-          <select id="jf-view">
-            <option value="">All Jobs</option>
-            <option value="mine">Created by Me</option>
-            <option value="assigned">Assigned to Me</option>
+        <div class="form-group" style="min-width:130px"><label>Status</label>
+          <select id="jf-status"><option value="">All Statuses</option>
+            ${['created','assigned_manager','assigned_associate','in_progress','pending_review','completed','cancelled'].map(s=>`<option value="${s}">${s.replace(/_/g,' ')}</option>`).join('')}
           </select>
         </div>
-        <div class="form-group"><label>Status</label>
-          <select id="jf-status"><option value="">All</option>
-            ${['created','assigned_manager','assigned_associate','in_progress','pending_review','completed'].map(s=>`<option value="${s}">${s.replace(/_/g,' ')}</option>`).join('')}
+        <div class="form-group" style="min-width:140px"><label>Customer</label>
+          <select id="jf-customer"><option value="">All Customers</option>${state.data.customers.map(c=>`<option>${c}</option>`).join('')}</select>
+        </div>
+        <div class="form-group" style="min-width:130px"><label>Job Type</label>
+          <select id="jf-type"><option value="">All Types</option>${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select>
+        </div>
+        <div class="form-group" style="min-width:150px"><label>Created By</label>
+          <select id="jf-created-by"><option value="">Anyone</option>
+            <option value="__me__">Me</option>
+            ${[...new Map(state.data.jobs.filter(j=>j.createdByName).map(j=>[j.createdBy,j.createdByName])).entries()].sort((a,b)=>a[1].localeCompare(b[1])).map(([uid,name])=>`<option value="${uid}">${name}</option>`).join('')}
           </select>
         </div>
-        <div class="form-group"><label>Customer</label>
-          <select id="jf-customer"><option value="">All</option>${state.data.customers.map(c=>`<option>${c}</option>`).join('')}</select>
+        <div class="form-group" style="min-width:150px"><label>Assigned To</label>
+          <select id="jf-assigned-to"><option value="">Anyone</option>
+            <option value="__me__">Me</option>
+            ${(()=>{const seen=new Map();state.data.jobs.forEach(j=>{if(j.assignedManagerId&&j.assignedManagerName)seen.set(j.assignedManagerId,j.assignedManagerName);(j.assignedAssocId||[]).forEach((id,i)=>{const n=(j.assignedAssocNames||[])[i];if(id&&n)seen.set(id,n);});});return [...seen.entries()].sort((a,b)=>a[1].localeCompare(b[1])).map(([uid,name])=>`<option value="${uid}">${name}</option>`).join('');})()}
+          </select>
         </div>
-        <div class="form-group"><label>Type</label>
-          <select id="jf-type"><option value="">All</option>${state.data.jobTypes.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select>
+        <div style="display:flex;gap:6px;align-items:flex-end;padding-bottom:1px">
+          <button class="btn btn-primary btn-sm" onclick="applyJobsFilter()">Apply</button>
+          <button class="btn btn-ghost btn-sm" onclick="resetJobsFilter()">Reset</button>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="applyJobsFilter()">Filter</button>
-        <button class="btn btn-ghost btn-sm" onclick="resetJobsFilter()">Reset</button>
       </div>
       <div class="tbl-wrap">
         <table id="all-jobs-table">
-          <thead><tr><th>#</th><th>Customer</th><th>Type</th><th>Status</th><th>Billable</th><th>Created</th><th>Created By</th><th>Assigned</th><th>Revenue</th><th>Rating</th><th>Actions</th></tr></thead>
+          <thead><tr><th>#</th><th>Customer</th><th>Type</th><th>Status</th><th>Billable</th><th>Created</th><th>Created By</th><th>Assigned To</th><th>Revenue</th><th>Rating</th><th style="min-width:160px">Actions</th></tr></thead>
           <tbody>${renderJobRows(pageJobs)}</tbody>
         </table>
       </div>
@@ -1169,13 +1177,16 @@ function renderJobRows(jobs) {
     <td>${j.billable?'✅':'❌'}</td>
     <td>${fmtDate(j.createdAt)}</td>
     <td>${j.createdByName||'—'}</td>
-    <td>${(j.assignedAssocNames||[]).join(', ')||j.assignedManagerName||'—'}</td>
+    <td style="font-size:12px">${[j.assignedManagerName ? `<span style="color:var(--text-light)">Mgr:</span> ${j.assignedManagerName}` : '', (j.assignedAssocNames||[]).length ? `<span style="color:var(--text-light)">Assoc:</span> ${j.assignedAssocNames.join(', ')}` : ''].filter(Boolean).join('<br>') || '—'}</td>
     <td>${fmt(j.revenue)}</td>
     <td>${ratingBadge(j.rating)}</td>
-    <td style="white-space:nowrap;display:flex;gap:4px;flex-wrap:wrap">
-      <button class="btn btn-primary btn-sm" onclick="openJobModal('${j.id}')">View</button>
-      ${canAssign && j.status !== 'completed' ? `<button class="btn btn-teal btn-sm" onclick="showQuickAssignModal('${j.id}')">Assign</button>` : ''}
-      ${state.user.role==='admin' ? `<button class="btn btn-danger btn-sm" onclick="deleteJob('${j.id}')">Del</button>` : ''}
+    <td style="white-space:nowrap">
+      <div style="display:flex;gap:4px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="openJobModal('${j.id}')">View</button>
+        ${canAssign && j.status !== 'completed' && j.status !== 'cancelled' ? `<button class="btn btn-teal btn-sm" onclick="showQuickAssignModal('${j.id}')">Assign</button>` : ''}
+        ${canAssign ? `<button class="btn btn-ghost btn-sm" title="Duplicate" onclick="cloneJob('${j.id}',this)">⧉</button>` : ''}
+        ${(state.user.role==='admin'||state.user.role==='manager'||state.user.role==='office_support') && j.status !== 'completed' && j.status !== 'cancelled' ? `<button class="btn btn-danger btn-sm" onclick="cancelJob('${j.id}',this)">Cancel</button>` : ''}
+      </div>
     </td>
   </tr>`).join('');
 }
@@ -3618,6 +3629,22 @@ async function cloneJob(jobId, btn) {
   }
 }
 
+// ── Cancel job ──
+async function cancelJob(jobId, btn) {
+  if (!confirm('Mark this job as Cancelled? It will remain visible but no further actions can be taken.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const updated = await apiFetch(`/api/jobs/${jobId}/cancel`, { method: 'PUT' });
+    const idx = state.data.jobs.findIndex(j => j.id === jobId);
+    if (idx !== -1) state.data.jobs[idx] = { ...state.data.jobs[idx], ...updated };
+    _renderJobsPage();
+    toast('Job cancelled');
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Cancel'; }
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
 // ── Analytics filter ──
 function applyAnalyticsFilter() {
   const customer = document.getElementById('af-customer')?.value || '';
@@ -3679,20 +3706,28 @@ function applyAnalyticsFilter() {
 
 // ── Jobs filter + pagination ──
 function applyJobsFilter() {
-  const view = document.getElementById('jf-view')?.value;
-  const status = document.getElementById('jf-status')?.value;
-  const customer = document.getElementById('jf-customer')?.value;
-  const type = document.getElementById('jf-type')?.value;
+  const status     = document.getElementById('jf-status')?.value;
+  const customer   = document.getElementById('jf-customer')?.value;
+  const type       = document.getElementById('jf-type')?.value;
+  const createdBy  = document.getElementById('jf-created-by')?.value;
+  const assignedTo = document.getElementById('jf-assigned-to')?.value;
   const uid = state.user?.uid;
 
   let jobs = state.data.jobs;
-  if (view === 'mine') jobs = jobs.filter(j => j.createdBy === uid);
-  else if (view === 'assigned') jobs = jobs.filter(j =>
-    j.assignedManagerId === uid || (j.assignedAssocId||[]).includes(uid)
-  );
-  if (status) jobs = jobs.filter(j => j.status === status);
+  if (status)   jobs = jobs.filter(j => j.status === status);
   if (customer) jobs = jobs.filter(j => j.customerId === customer);
-  if (type) jobs = jobs.filter(j => j.jobTypeId === type);
+  if (type)     jobs = jobs.filter(j => j.jobTypeId === type);
+  if (createdBy) {
+    const targetUid = createdBy === '__me__' ? uid : createdBy;
+    jobs = jobs.filter(j => j.createdBy === targetUid);
+  }
+  if (assignedTo) {
+    const targetUid = assignedTo === '__me__' ? uid : assignedTo;
+    jobs = jobs.filter(j =>
+      j.assignedManagerId === targetUid ||
+      (j.assignedAssocId || []).includes(targetUid)
+    );
+  }
 
   state.jobsPage = 0;
   window._filteredJobs = jobs;
@@ -3713,7 +3748,7 @@ function navToJobsFilter(which) {
 }
 
 function resetJobsFilter() {
-  ['jf-view','jf-status','jf-customer','jf-type'].forEach(id => {
+  ['jf-status','jf-customer','jf-type','jf-created-by','jf-assigned-to'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -4113,7 +4148,7 @@ Object.assign(window, {
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
   exportJobLocations, uploadLocationsToJob,
-  deleteJob, cloneJob, navToJobsFilter, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
+  deleteJob, cloneJob, cancelJob, navToJobsFilter, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
   updateSelfLogFields, updateCreateJobFields,
   debounceFilterActivityLog, applyDataRefresh,
   showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
