@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.eshipper.warehouse'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.eshipper.warehouse"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        // APP_URL is injected at build time via -PappUrl gradle property
+        def appUrl = project.findProperty('appUrl') ?: 'https://placeholder.run.app/'
+        buildConfigField "String", "APP_URL", "\"${appUrl}\""
+    }
+
+    signingConfigs {
+        release {
+            storeFile     file(project.findProperty('keystoreFile')     ?: 'keystore.jks')
+            storePassword (project.findProperty('keystorePassword')     ?: '')
+            keyAlias      (project.findProperty('keyAlias')             ?: '')
+            keyPassword   (project.findProperty('keyPassword')          ?: '')
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // No extra dependencies — pure Android SDK only
+}
