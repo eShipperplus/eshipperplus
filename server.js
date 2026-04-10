@@ -9,6 +9,7 @@ const { Parser } = require('json2csv');
 const XLSX = require('xlsx');
 const helmet = require('helmet');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const nodemailer = require('nodemailer');
 
@@ -29,7 +30,34 @@ const bucket = getStorage().bucket();
 // ─── Express Setup ────────────────────────────────────────────────────────────
 const app = express();
 app.use(helmet({ contentSecurityPolicy: false })); // CSP handled separately for SPA
-app.use(cors());
+
+// CORS — locked to the app's own origin in production; open in local dev
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN; // set this in Cloud Run env vars
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow requests with no origin (server-to-server, mobile apps, curl)
+    if (!origin) return cb(null, true);
+    // In dev (no ALLOWED_ORIGIN set), allow everything
+    if (!ALLOWED_ORIGIN) return cb(null, true);
+    // In production, only allow the configured origin
+    if (origin === ALLOWED_ORIGIN) return cb(null, true);
+    cb(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,
+}));
+
+// Rate limiting — max 200 requests per minute per IP
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please slow down.' },
+  // Cloud Run sits behind Google's load balancer — trust the forwarded IP
+  keyGenerator: (req) => req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip,
+});
+app.use('/api/', limiter);
+
 app.use(express.json({ limit: '2mb' }));  // guard against oversized payloads
 app.use(express.static(path.join(__dirname, 'public')));
 
