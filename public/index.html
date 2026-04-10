@@ -144,6 +144,7 @@ tr:hover td { background: #f0f4ff; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .toast { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 22px; border-radius: 20px; font-size: 14px; z-index: 1000; animation: fadeInUp 0.3s; }
 @keyframes fadeInUp { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
 .filter-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
 .filter-row .form-group { margin-bottom: 0; min-width: 150px; }
 
@@ -230,6 +231,14 @@ tr:hover td { background: #f0f4ff; }
 
 <!-- Main App -->
 <div id="app" style="display:none">
+  <!-- Scanner ready pill — shown only for associates/managers on mobile -->
+  <div id="scanner-pill" style="display:none;position:fixed;bottom:72px;right:14px;z-index:800;
+    background:#1a202c;color:#fff;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;
+    display:none;align-items:center;gap:6px;box-shadow:0 2px 10px rgba(0,0,0,0.3);cursor:default"
+    title="Scanner ready — point barcode gun at any field">
+    <span style="width:8px;height:8px;border-radius:50%;background:#48bb78;display:inline-block;animation:pulse 1.5s infinite"></span>
+    Scanner ready
+  </div>
   <div id="offline-banner">⚠ You are offline — jobs will sync when reconnected</div>
   <div id="topbar">
     <div class="logo">eShipper<span>+</span> Warehouse</div>
@@ -598,6 +607,13 @@ function renderNav() {
   const defaultView = items[0]?.id;
   if (!state.view) state.view = defaultView;
 
+  // Show scanner pill for associates and managers (they use the handheld devices)
+  const pill = document.getElementById('scanner-pill');
+  if (pill) {
+    const showPill = ['associate', 'manager'].includes(role);
+    pill.style.display = showPill ? 'flex' : 'none';
+  }
+
   const sidebarNav = document.getElementById('sidebar-nav');
   const mobileNav = document.getElementById('mobile-nav');
 
@@ -774,7 +790,9 @@ function renderFieldInputs(fields, values = {}) {
           style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;font-family:inherit;resize:vertical"
         >${values[f.id]||''}</textarea>`
       : `<input type="${f.type||'text'}" name="${f.id}" value="${values[f.id]||''}"
-          placeholder="${f.label}" ${f.required?'required':''}/>`;
+          placeholder="${f.label}" ${f.required?'required':''}
+          data-scan-target="1" autocomplete="off"/>`;
+
     return `<div class="form-group" data-field-id="${f.id}"${swAttr} style="display:${visible?'block':'none'}">
       <label>${f.label}${f.required ? ' *' : ''}</label>
       ${input}
@@ -4323,6 +4341,164 @@ Object.assign(window, {
   deleteTemplate,
 });
 </script>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     BARCODE SCANNER ENGINE
+     Zebra / Honeywell scanners act as keyboard wedge:
+       • Characters arrive < 30ms apart (vs 100ms+ for human typing)
+       • Sequence ends with Enter (keyCode 13)
+     We detect this pattern globally and route the scanned value.
+══════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  // ── State ──────────────────────────────────────────────────────
+  let _buf = '';
+  let _lastKey = 0;
+  const THRESHOLD_MS = 40;   // chars faster than this = scanner
+  const MIN_LEN      = 2;    // ignore single-char "scans"
+
+  // ── Main keydown listener ───────────────────────────────────────
+  document.addEventListener('keydown', function(e) {
+    const now = Date.now();
+    const tag = document.activeElement?.tagName;
+    const inInput = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+
+    if (e.key === 'Enter') {
+      const gap = now - _lastKey;
+      const code = _buf.trim();
+      _buf = '';
+      _lastKey = 0;
+
+      // Only treat as barcode if the buffer arrived fast enough
+      if (code.length >= MIN_LEN && gap < THRESHOLD_MS * 3) {
+        e.preventDefault();
+        handleBarcodeScan(code, inInput);
+      }
+      return;
+    }
+
+    // Printable character
+    if (e.key.length === 1) {
+      const gap = now - _lastKey;
+      if (_lastKey && gap > THRESHOLD_MS * 4) {
+        // Too slow — this is human typing, reset buffer
+        _buf = '';
+      }
+      _buf += e.key;
+      _lastKey = now;
+    } else {
+      // Non-printable (arrow, shift, etc.) breaks scanner sequence
+      if (e.key !== 'Shift' && e.key !== 'CapsLock') {
+        _buf = '';
+        _lastKey = 0;
+      }
+    }
+  }, true); // capture phase so we see it before inputs
+
+  // ── Scan Router ─────────────────────────────────────────────────
+  function handleBarcodeScan(code, inInput) {
+    // 1. If a scan-target input is focused, fill it and move on
+    const focused = document.activeElement;
+    if (focused && focused.dataset.scanTarget) {
+      focused.value = code;
+      focused.dispatchEvent(new Event('input', { bubbles: true }));
+      // Move focus to next field
+      const form = focused.closest('form');
+      if (form) {
+        const inputs = [...form.querySelectorAll('input,textarea,select')].filter(el => !el.disabled && el.tabIndex !== -1);
+        const idx = inputs.indexOf(focused);
+        if (idx >= 0 && idx < inputs.length - 1) inputs[idx + 1].focus();
+      }
+      showScanToast(code, 'Filled: ' + (focused.placeholder || focused.name || 'field'));
+      return;
+    }
+
+    // 2. If any text/number input is focused, fill it
+    if (inInput && focused && (focused.type === 'text' || focused.type === 'number' || focused.tagName === 'TEXTAREA')) {
+      focused.value = code;
+      focused.dispatchEvent(new Event('input', { bubbles: true }));
+      showScanToast(code, 'Filled');
+      return;
+    }
+
+    // 3. Try to find a task/location matching this barcode
+    if (routeScanToTask(code)) return;
+
+    // 4. Try to find and open a job by job number
+    if (routeScanToJob(code)) return;
+
+    // 5. Nothing matched — show the scan and let user see it
+    showScanToast(code, 'Scanned — no match found');
+  }
+
+  // ── Route to task by location name or reference data ────────────
+  function routeScanToTask(code) {
+    if (!window.state?.data?.jobs) return false;
+    const normalized = code.trim().toUpperCase();
+
+    // Search all assigned jobs for a location whose name or referenceData value matches
+    for (const job of state.data.jobs) {
+      if (job.status === 'completed' || job.status === 'cancelled') continue;
+      const myUid = state.user?.uid;
+      const isAssigned = (job.assignedAssocId || []).includes(myUid) ||
+                         job.assignedManagerId === myUid ||
+                         ['admin', 'manager'].includes(state.user?.role);
+      if (!isAssigned) continue;
+
+      for (const loc of (job.locations || [])) {
+        if (loc.status === 'done') continue;
+        const nameMatch = (loc.name || '').toUpperCase() === normalized;
+        const refMatch = Object.values(loc.referenceData || {}).some(v =>
+          String(v).toUpperCase() === normalized
+        );
+        if (nameMatch || refMatch) {
+          showScanToast(code, `Found: ${loc.name} → opening task`);
+          setTimeout(() => openMarkLocationDoneModal(job.id, loc.id), 400);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // ── Route to job by job number (ES-001) ─────────────────────────
+  function routeScanToJob(code) {
+    if (!window.state?.data?.jobs) return false;
+    const normalized = code.trim().toUpperCase();
+    const job = state.data.jobs.find(j => (j.jobNumber || '').toUpperCase() === normalized);
+    if (job) {
+      showScanToast(code, `Opening job ${job.jobNumber}`);
+      setTimeout(() => openJobModal(job.id), 400);
+      return true;
+    }
+    return false;
+  }
+
+  // ── Toast ────────────────────────────────────────────────────────
+  function showScanToast(code, action) {
+    let el = document.getElementById('scan-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'scan-toast';
+      el.style.cssText = [
+        'position:fixed', 'bottom:80px', 'left:50%', 'transform:translateX(-50%)',
+        'background:#1a202c', 'color:#fff', 'padding:10px 18px', 'border-radius:20px',
+        'font-size:13px', 'z-index:9999', 'display:flex', 'align-items:center', 'gap:10px',
+        'box-shadow:0 4px 16px rgba(0,0,0,0.3)', 'max-width:90vw',
+      ].join(';');
+      document.body.appendChild(el);
+    }
+    el.innerHTML = `<span style="font-size:18px">📷</span><div><div style="font-weight:700;font-size:14px">${code}</div><div style="font-size:12px;opacity:0.75">${action}</div></div>`;
+    el.style.opacity = '1';
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.style.opacity = '0'; }, 2500);
+  }
+
+  // ── Expose for manual trigger (e.g. test button) ─────────────────
+  window._triggerBarcodeScan = handleBarcodeScan;
+})();
+</script>
+
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
