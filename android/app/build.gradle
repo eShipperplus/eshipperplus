@@ -20,7 +20,7 @@ android {
 
     signingConfigs {
         release {
-            storeFile     file(project.findProperty('keystoreFile')     ?: 'keystore.jks')
+            storeFile     rootProject.file(project.findProperty('keystoreFile') ?: 'keystore.jks')
             storePassword (project.findProperty('keystorePassword')     ?: '')
             keyAlias      (project.findProperty('keyAlias')             ?: '')
             keyPassword   (project.findProperty('keyPassword')          ?: '')
