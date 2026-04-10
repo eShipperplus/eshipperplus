@@ -587,7 +587,6 @@ const NAV_ITEMS = {
   ],
   associate: [
     { id: 'my-jobs', label: 'My Jobs', icon: '📋' },
-    { id: 'self-log', label: 'Self-Log', icon: '✏️' },
   ],
   office_support: [
     { id: 'dashboard',    label: 'Dashboard',    icon: '📊', group: 'Overview' },
@@ -1301,9 +1300,7 @@ function renderMyJobs() {
   const done = jobs.filter(j => j.status === 'completed').slice(0, 20);
 
   return `
-    <div class="section-header"><h1>My Jobs</h1>
-      <button class="btn btn-teal" onclick="showSelfLogModal()">+ Self-Log</button>
-    </div>
+    <div class="section-header"><h1>My Jobs</h1></div>
     ${active.length ? `
     <div class="card">
       <div class="card-title">Active (${active.length})</div>
@@ -1331,11 +1328,14 @@ function renderMyJobs() {
           ${j.instructions?`<div style="font-size:12px;margin-top:6px;padding:6px 8px;background:#f0fff4;border-radius:5px;color:#276749">${j.instructions}</div>`:''}
           ${j.notes?`<div style="font-size:12px;margin-top:8px;color:var(--text-light)">${j.notes}</div>`:''}
           ${(()=>{
-            const myLocs = (j.locations||[]).filter(l=>l.assignedAssocId===uid);
-            if (!myLocs.length) return '';
+            const allLocs = j.locations || [];
+            const doneCnt = allLocs.filter(l=>l.status==='done').length;
             return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
-              <div style="font-size:11px;font-weight:700;color:var(--text-light);letter-spacing:.05em;margin-bottom:6px">YOUR LOCATIONS</div>
-              ${myLocs.map(l=>`
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div style="font-size:11px;font-weight:700;color:var(--text-light);letter-spacing:.05em">TASKS ${allLocs.length?`(${doneCnt}/${allLocs.length} done)`:''}</div>
+                ${j.status!=='completed'&&j.status!=='cancelled'?`<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openAddTaskModal('${j.id}')">+ Add Task</button>`:''}
+              </div>
+              ${allLocs.length ? allLocs.map(l=>`
                 <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--grey)">
                   <div style="flex:1">
                     <div style="font-size:13px;font-weight:600">${l.name}</div>
@@ -1349,7 +1349,8 @@ function renderMyJobs() {
                         ${j.status!=='completed'?`<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="editDoneTask('${j.id}','${l.id}')">Edit</button>`:''}
                       </div>`
                   }
-                </div>`).join('')}
+                </div>`).join('')
+              : `<div style="font-size:12px;color:var(--text-light);padding:6px 0">No tasks yet — tap + Add Task to add one</div>`}
             </div>`;
           })()}
         </div>
@@ -1359,11 +1360,11 @@ function renderMyJobs() {
       <div class="card-title">Recent Completed</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Customer</th><th>Type</th><th>Completed</th><th>Revenue</th><th>Rating</th></tr></thead>
+          <thead><tr><th>Customer</th><th>Type</th><th>Completed</th>${state.user.role==='admin'?'<th>Revenue</th><th>Rating</th>':''}</tr></thead>
           <tbody>${done.length ? done.map(j=>`<tr>
             <td>${j.customerId}</td><td>${jtBadge(j.jobTypeId)}</td>
-            <td>${fmtDate(j.completedAt)}</td><td>${fmt(j.revenue)}</td><td>${ratingBadge(j.rating)}</td>
-          </tr>`).join('') : '<tr><td colspan="5" class="empty-state">None yet</td></tr>'}
+            <td>${fmtDate(j.completedAt)}</td>${state.user.role==='admin'?`<td>${fmt(j.revenue)}</td><td>${ratingBadge(j.rating)}</td>`:''}
+          </tr>`).join('') : `<tr><td colspan="${state.user.role==='admin'?5:3}" class="empty-state">None yet</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3590,6 +3591,100 @@ async function handleLocationPhotoSelect(input, jobId, locId) {
   input.value = '';
 }
 
+// ── Add Task Modal (associate adds a new task line to a job) ──
+function openAddTaskModal(jobId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  showModal(`
+    <div class="modal-header">
+      <h2>Add Task — ${job.customerId}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Task / Location Name *</label>
+        <input type="text" id="new-task-name" placeholder="e.g. BIN24-A-10 or Shelf B3" data-scan-target="1"
+          style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px" autocomplete="off"/>
+      </div>
+      <div class="form-group">
+        <label>Instructions <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
+        <textarea id="new-task-instructions" rows="2" placeholder="What needs to be done here…"
+          style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;resize:vertical"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Reference Info <span style="font-weight:400;color:var(--text-light)">(optional — e.g. SKU, PO#)</span></label>
+        <div id="new-task-refs">
+          <div class="field-row" style="margin-bottom:6px">
+            <input type="text" placeholder="Label (e.g. SKU)" style="width:40%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+            <input type="text" placeholder="Value" data-scan-target="1" style="width:55%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px" onclick="addNewTaskRefRow()">+ Add field</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitAddTask('${jobId}')">Add Task</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+  setTimeout(() => document.getElementById('new-task-name')?.focus(), 100);
+}
+
+function addNewTaskRefRow() {
+  const container = document.getElementById('new-task-refs');
+  if (!container) return;
+  const row = document.createElement('div');
+  row.className = 'field-row';
+  row.style.marginBottom = '6px';
+  row.innerHTML = `
+    <input type="text" placeholder="Label" style="width:40%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+    <input type="text" placeholder="Value" data-scan-target="1" style="width:55%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
+    <button type="button" onclick="this.parentElement.remove()" style="background:none;border:none;color:var(--danger);font-size:16px;cursor:pointer;flex-shrink:0">✕</button>`;
+  container.appendChild(row);
+}
+
+async function submitAddTask(jobId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const name = document.getElementById('new-task-name')?.value.trim();
+  if (!name) { toast('Task name is required'); return; }
+
+  const instructions = document.getElementById('new-task-instructions')?.value.trim() || '';
+  const referenceData = {};
+  document.querySelectorAll('#new-task-refs .field-row').forEach(row => {
+    const [labelEl, valueEl] = row.querySelectorAll('input');
+    if (labelEl?.value.trim() && valueEl?.value.trim()) {
+      referenceData[labelEl.value.trim()] = valueEl.value.trim();
+    }
+  });
+
+  const newLoc = {
+    id: `loc_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+    name,
+    instructions,
+    referenceData,
+    assignedAssocId: state.user.uid,
+    assignedAssocName: state.user.displayName || state.user.email,
+    status: 'pending',
+    capturedData: {},
+    assocNotes: '',
+    photos: [],
+  };
+
+  const existingLocs = job.locations || [];
+  try {
+    await apiFetch(`/api/jobs/${jobId}/locations`, {
+      method: 'PUT',
+      body: JSON.stringify({ locations: [...existingLocs, newLoc] }),
+    });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadData();
+    renderView();
+    toast('Task added');
+  } catch(err) {
+    toast('Error: ' + err.message, 3000);
+  }
+}
+
 // ── Edit a Done Task ──
 async function editDoneTask(jobId, locId) {
   // Reopen (un-done) the task then open the mark-done modal pre-filled
@@ -4316,6 +4411,7 @@ Object.assign(window, {
   addLocationRow, handleLocationCSV, showAssignLocationsModal, submitAssignLocations,
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect, editDoneTask,
+  openAddTaskModal, addNewTaskRefRow, submitAddTask,
   exportJobLocations, uploadLocationsToJob,
   deleteJob, cloneJob, cancelJob, navToJobsFilter, exportJobsExcel, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
   updateSelfLogFields, updateCreateJobFields,
