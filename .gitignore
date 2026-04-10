@@ -4,3 +4,8 @@ node_modules/
 jest-results.json
 coverage/
 .claude/
+*service-account*.json
+*serviceAccount*.json
+*firebase-adminsdk*.json
+keystore.jks
+*.keystore
