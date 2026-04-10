@@ -877,6 +877,47 @@ app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
   }
 });
 
+// Reopen a done task (un-mark as done) — any assigned associate, manager, or admin
+app.put('/api/jobs/:id/locations/:locId/reopen', requireAuth, async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    const job = jobSnap.data();
+    if (job.status === 'completed') return res.status(400).json({ error: 'Cannot reopen tasks on a completed job' });
+    const locIndex = (job.locations || []).findIndex(l => l.id === req.params.locId);
+    if (locIndex === -1) return res.status(404).json({ error: 'Task not found' });
+    const loc = job.locations[locIndex];
+
+    const jobAssocIds = job.assignedAssocId || [];
+    const canReopen =
+      loc.assignedAssocId === uid ||
+      (!loc.assignedAssocId && jobAssocIds.includes(uid)) ||
+      ['manager', 'admin'].includes(user.role);
+    if (!canReopen) return res.status(403).json({ error: 'Not authorized to reopen this task' });
+
+    const now = Timestamp.now();
+    const updatedLocations = job.locations.map((l, i) =>
+      i === locIndex ? { ...l, status: 'pending', completedAt: null } : l
+    );
+    // If job was pending_review and we reopen a task, pull it back to in_progress
+    const newJobStatus = job.status === 'pending_review' ? 'in_progress' : job.status;
+    await db.collection('wh_jobs').doc(req.params.id).update({
+      locations: updatedLocations,
+      status: newJobStatus,
+      updatedBy: uid, updatedByName: user.displayName, updatedAt: now,
+    });
+    await writeLog({ action: 'job.location_reopened', entity: 'job', entityId: req.params.id,
+      entityLabel: `${job.jobNumber || req.params.id} · ${job.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role,
+      metadata: { location: loc.name } });
+    res.json({ id: req.params.id, locations: updatedLocations });
+  } catch (err) {
+    console.error('PUT location reopen error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Associate marks a location as done
 app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => {
   try {

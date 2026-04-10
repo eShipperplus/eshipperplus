@@ -1324,7 +1324,13 @@ function renderMyJobs() {
                     ${(()=>{const ref=Object.entries(l.referenceData||{}).filter(([,v])=>v);return ref.length?`<div style="font-size:11px;color:var(--text-light);margin-top:2px">${ref.map(([k,v])=>`${k}: ${v}`).join(' · ')}</div>`:l.instructions?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''})()}
                     ${l.status==='done'?`<div style="font-size:11px;color:#276749;margin-top:2px">✓ Done${l.assocNotes?' — '+l.assocNotes:''}</div>`:''}
                   </div>
-                  ${l.status!=='done'?`<button class="btn btn-teal btn-sm" onclick="openMarkLocationDoneModal('${j.id}','${l.id}')">Mark Done</button>`:'<span style="color:#276749;font-size:18px;line-height:1">✓</span>'}
+                  ${l.status!=='done'
+                    ? `<button class="btn btn-teal btn-sm" onclick="openMarkLocationDoneModal('${j.id}','${l.id}')">Mark Done</button>`
+                    : `<div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+                        <span style="color:#276749;font-size:18px;line-height:1">✓</span>
+                        ${j.status!=='completed'?`<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="editDoneTask('${j.id}','${l.id}')">Edit</button>`:''}
+                      </div>`
+                  }
                 </div>`).join('')}
             </div>`;
           })()}
@@ -3093,7 +3099,10 @@ async function openJobModal(jobId) {
           return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;background:${l.status==='done'?'#f0fff4':'#fff'}">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
               <div style="font-weight:600;font-size:13px">${l.name}</div>
-              ${l.status==='done'?'<span style="color:#276749;font-size:18px">✓</span>':'<span style="font-size:11px;color:var(--text-light)">Pending</span>'}
+              <div style="display:flex;align-items:center;gap:8px">
+                ${l.status==='done'?'<span style="color:#276749;font-size:18px">✓</span>':'<span style="font-size:11px;color:var(--text-light)">Pending</span>'}
+                ${l.status==='done' && job.status!=='completed' ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="editDoneTask('${job.id}','${l.id}')">Edit</button>` : ''}
+              </div>
             </div>
             ${refEntries.length?`<div style="font-size:12px;color:var(--text-light);margin-bottom:4px">${refEntries.map(([k,v])=>`<span style="margin-right:10px"><strong>${k}:</strong> ${v}</span>`).join('')}</div>`:''}
             <div style="font-size:11px;color:var(--text-light)">${l.assignedAssocName?`Assigned: <strong style="color:var(--text)">${l.assignedAssocName}</strong>`:'Unassigned'}</div>
@@ -3561,6 +3570,18 @@ async function handleLocationPhotoSelect(input, jobId, locId) {
     } catch(err) { ph.textContent = '❌'; toast('Photo failed: ' + err.message, 3000); }
   }
   input.value = '';
+}
+
+// ── Edit a Done Task ──
+async function editDoneTask(jobId, locId) {
+  // Reopen (un-done) the task then open the mark-done modal pre-filled
+  try {
+    await apiFetch(`/api/jobs/${jobId}/locations/${locId}/reopen`, { method: 'PUT' });
+    await loadData();
+    openMarkLocationDoneModal(jobId, locId);
+  } catch(err) {
+    toast('Error: ' + err.message, 3000);
+  }
 }
 
 // ── Mark Location Done Modal (Associate) ──
@@ -4276,7 +4297,7 @@ Object.assign(window, {
   openSubmitReviewModal, submitForReview, openReviewCompleteModal, submitReviewComplete,
   addLocationRow, handleLocationCSV, showAssignLocationsModal, submitAssignLocations,
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
-  openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect,
+  openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect, editDoneTask,
   exportJobLocations, uploadLocationsToJob,
   deleteJob, cloneJob, cancelJob, navToJobsFilter, exportJobsExcel, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
   updateSelfLogFields, updateCreateJobFields,
