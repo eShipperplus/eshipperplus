@@ -888,7 +888,13 @@ app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => 
     const locIndex = (job.locations || []).findIndex(l => l.id === req.params.locId);
     if (locIndex === -1) return res.status(404).json({ error: 'Location not found' });
     const loc = job.locations[locIndex];
-    if (loc.assignedAssocId !== uid) return res.status(403).json({ error: 'Not assigned to this location' });
+    // Allow: specifically assigned to this location, OR assigned to the job (when no per-location assignment), OR manager/admin
+    const jobAssocIds = job.assignedAssocId || [];
+    const canMark =
+      loc.assignedAssocId === uid ||
+      (!loc.assignedAssocId && jobAssocIds.includes(uid)) ||
+      ['manager', 'admin'].includes(req.user.role);
+    if (!canMark) return res.status(403).json({ error: 'Not assigned to this task' });
     const now = Timestamp.now();
     const updatedLocations = job.locations.map((l, i) =>
       i === locIndex ? { ...l, status: 'done', assocNotes: assocNotes || '', capturedData: capturedData || {}, completedAt: now } : l
