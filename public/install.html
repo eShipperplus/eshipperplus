@@ -4,7 +4,6 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Install — eShipper+ Warehouse</title>
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -151,7 +150,7 @@ body {
   <div class="subtitle">Scan to install the app on your device</div>
 
   <div class="qr-wrap">
-    <div id="qrcode"></div>
+    <img id="qrcode" src="" alt="QR Code" width="200" height="200"/>
   </div>
 
   <div class="url-box" onclick="copyUrl()" title="Click to copy">
@@ -194,19 +193,12 @@ body {
 </div>
 
 <script>
-  // Build the app URL from the current page's origin
   const appUrl = window.location.origin + '/';
   document.getElementById('url-text').textContent = window.location.origin;
 
-  // Generate QR code
-  new QRCode(document.getElementById('qrcode'), {
-    text: appUrl,
-    width: 200,
-    height: 200,
-    colorDark: '#34368a',
-    colorLight: '#ffffff',
-    correctLevel: QRCode.CorrectLevel.H,
-  });
+  // Generate QR code via qrserver.com — no library needed, just an image
+  const qrSrc = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=4&color=34368a&data=' + encodeURIComponent(appUrl);
+  document.getElementById('qrcode').src = qrSrc;
 
   function copyUrl() {
     navigator.clipboard.writeText(appUrl).then(() => {
