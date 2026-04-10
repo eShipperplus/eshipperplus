@@ -1,0 +1,168 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:          # run manually from GitHub Actions tab
+  push:
+    branches: [main]
+    paths:
+      - 'public/manifest.json'
+      - 'public/icon-*.png'
+      - '.github/workflows/build-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── Authenticate to GCP so we can look up the Cloud Run URL ──────────────
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get Cloud Run URL
+        id: cloudrun
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          URL=$(gcloud run services describe warehouse-billing \
+            --region northamerica-northeast2 \
+            --project "$GCP_PROJECT_ID" \
+            --format="value(status.url)")
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "host=$(echo $URL | sed 's|https://||')" >> $GITHUB_OUTPUT
+          echo "Cloud Run URL: $URL"
+
+      # ── Install Bubblewrap ────────────────────────────────────────────────────
+      - name: Install Bubblewrap
+        run: npm install -g @bubblewrap/cli
+
+      # ── Write TWA manifest (bubblewrap project config) ────────────────────────
+      - name: Write twa-manifest.json
+        env:
+          APP_URL: ${{ steps.cloudrun.outputs.url }}
+          APP_HOST: ${{ steps.cloudrun.outputs.host }}
+        run: |
+          cat > twa-manifest.json << EOF
+          {
+            "packageId": "com.eshipper.warehouse",
+            "host": "$APP_HOST",
+            "name": "eShipper+ Warehouse",
+            "launcherName": "WH Billing",
+            "display": "standalone",
+            "orientation": "portrait",
+            "themeColor": "#34368a",
+            "navigationColor": "#34368a",
+            "navigationColorDark": "#1e2050",
+            "navigationDividerColor": "#34368a",
+            "navigationDividerColorDark": "#1e2050",
+            "backgroundColor": "#34368a",
+            "enableNotifications": false,
+            "startUrl": "/",
+            "iconUrl": "$APP_URL/icon-512.png",
+            "maskableIconUrl": "$APP_URL/icon-512.png",
+            "monochromeIconUrl": "$APP_URL/icon-512.png",
+            "appVersion": "1.0",
+            "appVersionCode": 1,
+            "signingMode": "local",
+            "features": {},
+            "alphaDependencies": { "enabled": false },
+            "enableSiteSettingsShortcut": true,
+            "isChromeOSOnly": false,
+            "isMetaQuest": false,
+            "fullScopeUrl": "$APP_URL/",
+            "minSdkVersion": 21,
+            "webManifestUrl": "$APP_URL/manifest.json",
+            "fallbackType": "customtabs",
+            "shortcuts": [],
+            "generatorApp": "bubblewrap-cli",
+            "fingerprints": []
+          }
+          EOF
+
+      # ── Generate keystore (or restore from secret) ────────────────────────────
+      - name: Set up signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p android/app
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android-keystore.jks
+            echo "Restored existing keystore from secret"
+          else
+            keytool -genkeypair \
+              -alias eshipper-warehouse \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 9125 \
+              -keystore android-keystore.jks \
+              -storepass warehouse123 \
+              -keypass warehouse123 \
+              -dname "CN=eShipper Warehouse, OU=Warehouse, O=eShipper, L=Toronto, ST=Ontario, C=CA" \
+              -noprompt
+            echo "Generated new keystore (save the base64 below as KEYSTORE_BASE64 secret):"
+            base64 -w 0 android-keystore.jks
+          fi
+
+      # ── Build the APK ─────────────────────────────────────────────────────────
+      - name: Build TWA APK with Bubblewrap
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'warehouse123' }}
+          KEY_ALIAS: ${{ secrets.KEYSTORE_ALIAS || 'eshipper-warehouse' }}
+          KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'warehouse123' }}
+        run: |
+          bubblewrap build \
+            --manifest twa-manifest.json \
+            --skipPwaValidation \
+            --keystore android-keystore.jks \
+            --keystorePassword "$KEYSTORE_PASSWORD" \
+            --keyAlias "$KEY_ALIAS" \
+            --keyPassword "$KEY_PASSWORD"
+
+      # ── Rename APK with version info ──────────────────────────────────────────
+      - name: Rename APK
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          mv app-release-signed.apk eshipper-warehouse-${DATE}.apk || \
+          find . -name "*.apk" -not -path "*/node_modules/*" | head -1 | \
+            xargs -I{} mv {} eshipper-warehouse-${DATE}.apk
+          echo "APK ready: eshipper-warehouse-${DATE}.apk"
+          ls -lh eshipper-warehouse-*.apk
+
+      # ── Upload APK as downloadable artifact ───────────────────────────────────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eshipper-warehouse-apk
+          path: eshipper-warehouse-*.apk
+          retention-days: 30
+
+      # ── Print keystore fingerprint (needed for assetlinks.json) ──────────────
+      - name: Print SHA-256 fingerprint
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'warehouse123' }}
+        run: |
+          echo ""
+          echo "══════════════════════════════════════════════"
+          echo " APK BUILD COMPLETE"
+          echo "══════════════════════════════════════════════"
+          echo " Download the APK from the Actions artifacts"
+          echo " section above, then upload it to Rufus."
+          echo ""
+          keytool -list -v \
+            -keystore android-keystore.jks \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias eshipper-warehouse 2>/dev/null \
+            | grep "SHA256:" || true
+          echo "══════════════════════════════════════════════"
