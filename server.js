@@ -30,12 +30,12 @@ const bucket = getStorage().bucket();
 const app = express();
 app.use(helmet({ contentSecurityPolicy: false })); // CSP handled separately for SPA
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));  // guard against oversized payloads
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const ROLES = ['admin', 'manager', 'associate', 'office_support'];
-const STATUSES = ['created', 'assigned_manager', 'assigned_associate', 'in_progress', 'pending_review', 'completed'];
+const STATUSES = ['created', 'assigned_manager', 'assigned_associate', 'in_progress', 'pending_review', 'completed', 'cancelled'];
 
 const JOB_TYPE_DEFS = {
   bts: {
@@ -252,16 +252,21 @@ function requireRole(...roles) {
 }
 
 // ─── Job Number Counter ───────────────────────────────────────────────────────
+// Uses a Firestore transaction to guarantee atomic increment — no duplicate
+// job numbers even under heavy concurrent load.
 async function getNextJobNumber() {
   const counterRef = db.collection('wh_config').doc('counters');
-  const snap = await counterRef.get();
-  const current = snap.exists ? (snap.data().jobCounter || 0) : 0;
-  const next = current + 1;
-  if (snap.exists) {
-    await counterRef.update({ jobCounter: next });
-  } else {
-    await counterRef.set({ jobCounter: next });
-  }
+  let next;
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(counterRef);
+    const current = snap.exists ? (snap.data().jobCounter || 0) : 0;
+    next = current + 1;
+    if (snap.exists) {
+      tx.update(counterRef, { jobCounter: next });
+    } else {
+      tx.set(counterRef, { jobCounter: next });
+    }
+  });
   return `ES-${String(next).padStart(3, '0')}`;
 }
 
@@ -563,6 +568,15 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
     if (!jobTypeId || !customerId) {
       return res.status(400).json({ error: 'jobTypeId and customerId are required' });
     }
+    if (typeof customerId !== 'string' || customerId.length > 500) {
+      return res.status(400).json({ error: 'customerId must be a string under 500 characters' });
+    }
+    if (locations !== undefined && !Array.isArray(locations)) {
+      return res.status(400).json({ error: 'locations must be an array' });
+    }
+    if (Array.isArray(locations) && locations.length > 1000) {
+      return res.status(400).json({ error: 'locations limit is 1000 per job' });
+    }
     // Validate against built-in types and any custom types stored in Firestore
     const jobTypesDoc = await db.collection('wh_config').doc('jobTypes').get();
     const validJobTypeIds = jobTypesDoc.exists
@@ -779,7 +793,7 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
 });
 
 // Manager saves location assignments
-app.put('/api/jobs/:id/locations', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
+app.put('/api/jobs/:id/locations', requireAuth, requireRole('manager', 'admin', 'office_support'), async (req, res) => {
   try {
     const { user, uid } = req;
     const { locations } = req.body;
