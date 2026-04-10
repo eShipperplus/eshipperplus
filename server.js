@@ -1378,6 +1378,59 @@ app.put('/api/rates', requireAuth, requireRole('admin'), async (req, res) => {
   }
 });
 
+// Apply standard rate template to all clients (or only those with no rates)
+app.post('/api/rates/seed-defaults', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { overwrite = false } = req.body;
+
+    const DEFAULT_RATES = {
+      bts:                  { pallets_wrapped: 7.50, cartons: 0.50, labels: 0.50, units: 0.20, inspection_hours: 40.00 },
+      kit:                  { kits_made: 3.00, labour_hours: 40.00, units: 0.15, cartons: 0.50, labels: 0.50, skus: 0.35 },
+      cycle_count:          { labour_hours: 40.00, pallets_shrink_wrapped: 7.50, pallets_put_away: 7.50, pallets_let_down: 7.50, pallets_consolidated: 7.50, units: 0.20, cartons: 0.50, unit_labels: 0.50, carton_labels: 0.50 },
+      disposal:             { inspection_hours: 40.00, units: 0.20, pallets: 7.50 },
+      consolidation:        { labour_hours: 40.00, units: 0.15, pallets: 7.50, cartons: 0.50 },
+      closeout:             { pallets: 7.50, labour_hours: 40.00, units: 0.15, cartons: 0.50 },
+      image_request:        { labour_hours: 40.00, units: 0.20, cartons: 0.50 },
+      capture_item_details: { units: 0.20, labour_hours: 40.00, cartons: 0.50 },
+      miscellaneous:        { units: 0.20, pallets: 7.50, cartons: 0.50, labour_hours: 40.00 },
+      returns_inspection:   { inspection_hours: 40.00, units: 0.20, cartons: 3.50, pallets: 7.50 },
+      relabelling_repack:   { labour_hours: 40.00, units: 0.50, pallets: 7.50 },
+      cross_dock:           { cartons: 0.50, units: 0.20, days: 10.00, labour_hours: 40.00, pallets: 7.50, labels: 0.50 },
+    };
+
+    const [custSnap, rateSnap] = await Promise.all([
+      db.collection('wh_config').doc('customers').get(),
+      db.collection('wh_config').doc('rateCards').get(),
+    ]);
+
+    const customers = custSnap.exists ? (custSnap.data().list || []) : [];
+    const existing  = rateSnap.exists ? rateSnap.data() : {};
+    const updated   = { ...existing };
+    const seeded = [], skipped = [];
+
+    for (const customer of customers) {
+      if (!overwrite && existing[customer] && Object.keys(existing[customer]).length > 0) {
+        skipped.push(customer);
+      } else {
+        updated[customer] = DEFAULT_RATES;
+        seeded.push(customer);
+      }
+    }
+
+    if (seeded.length > 0) {
+      await db.collection('wh_config').doc('rateCards').set(updated);
+      await writeLog({ action: 'config.rates_seeded', entity: 'config', entityId: 'rateCards',
+        entityLabel: `Default rates applied to: ${seeded.join(', ')}`,
+        uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
+    }
+
+    res.json({ seeded, skipped, rates: updated });
+  } catch (err) {
+    console.error('POST /api/rates/seed-defaults error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put('/api/targets', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const targets = req.body; // { [jobTypeId]: { targetMarginPct, goodThresholdPct } }

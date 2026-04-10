@@ -2251,6 +2251,7 @@ function renderRateCards() {
           ⬆ Upload CSV <input type="file" accept=".csv" style="display:none" onchange="uploadRatesCSV(this)"/>
         </label>
         <button class="btn btn-primary btn-sm" onclick="saveRates()">Save Rates</button>
+        <button class="btn btn-ghost btn-sm" onclick="seedDefaultRates(this)" title="Apply the standard rate card template to all clients who have no rates set yet">⚡ Apply Template to All Clients</button>
       </div>
     </div>
     <div class="card" style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
@@ -2267,6 +2268,33 @@ function renderRateCards() {
       </div>
       <div id="rate-table-wrap"></div>
     </div>`;
+}
+
+async function seedDefaultRates(btn) {
+  const customers = state.data.customers || [];
+  if (!customers.length) { toast('No customers found — add customers first', 3000); return; }
+
+  const msg = `Apply standard rate template to all ${customers.length} client(s)?\n\nClients that already have rates will be SKIPPED.\nUse "Overwrite all" to replace existing rates too.`;
+  const choice = confirm(msg);
+  if (!choice) return;
+
+  const overwrite = confirm('Overwrite existing rates too?\n\nOK = replace all clients\nCancel = only fill clients with no rates');
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+  try {
+    const result = await apiFetch('/api/rates/seed-defaults', {
+      method: 'POST',
+      body: JSON.stringify({ overwrite }),
+    });
+    state.data.rateCards = result.rates;
+    const msg = `Done! Applied to ${result.seeded.length} client(s)${result.skipped.length ? `, skipped ${result.skipped.length} (already had rates)` : ''}.`;
+    toast(msg, 4000);
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Apply Template to All Clients'; }
+  }
 }
 
 async function uploadRatesCSV(input) {
@@ -4233,7 +4261,7 @@ Object.assign(window, {
   deleteJob, cloneJob, cancelJob, navToJobsFilter, exportJobsExcel, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
   updateSelfLogFields, updateCreateJobFields,
   debounceFilterActivityLog, applyDataRefresh,
-  showCreateJobModal, showSelfLogModal, renderRateTable, saveRates,
+  showCreateJobModal, showSelfLogModal, renderRateTable, saveRates, seedDefaultRates,
   updateUserRole, updateUserCost, deleteUser, showCreateTeamModal,
   submitCreateTeam, editTeamModal, submitEditTeam, deleteTeam, exportCSV,
   uploadCustomersCSV, addCustomer, removeCustomer,
