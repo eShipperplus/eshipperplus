@@ -1750,6 +1750,11 @@ app.get('/api/logs', requireAuth, requireRole('manager', 'admin'), async (req, r
 });
 
 // ─── SPA Fallback ─────────────────────────────────────────────────────────────
+// ─── Install / QR page (public, no auth) ─────────────────────────────────────
+app.get('/install', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'install.html'));
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
