@@ -1035,24 +1035,28 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         rows = hdf[["hour","activitytype","clientname","orders"]].copy()
         rows["hour"] = pd.to_numeric(rows["hour"], errors="coerce").fillna(0).astype(int)
         rows["orders"] = pd.to_numeric(rows["orders"], errors="coerce").fillna(0).astype(int)
+        HOUR_START = 7
         raw = json.dumps(rows.rename(columns={"hour":"h","activitytype":"t","clientname":"c","orders":"n"}).to_dict("records"))
-        hour_labels = json.dumps([f"{h:02d}:00" for h in range(24)])
-        # Build baseline arrays: max pick/pack per hour from historical data
-        bl_pk = [0] * 24
-        bl_pa = [0] * 24
+        hour_labels = json.dumps([f"{h:02d}:00" for h in range(HOUR_START, 24)])
+        n_hours = 24 - HOUR_START
+        # Build baseline arrays for hours 7–23 only
+        bl_pk = [0] * n_hours
+        bl_pa = [0] * n_hours
         if bdf is not None and not bdf.empty:
             bdf2 = bdf.copy()
             bdf2["hour"] = pd.to_numeric(bdf2["hour"], errors="coerce").fillna(0).astype(int)
             bdf2["max_orders"] = pd.to_numeric(bdf2["max_orders"], errors="coerce").fillna(0).astype(int)
             for _, r in bdf2.iterrows():
                 h = int(r["hour"])
-                if 0 <= h < 24:
+                if HOUR_START <= h < 24:
+                    idx = h - HOUR_START
                     if str(r.get("activitytype","")).lower() == "picking":
-                        bl_pk[h] = int(r["max_orders"])
+                        bl_pk[idx] = int(r["max_orders"])
                     else:
-                        bl_pa[h] = int(r["max_orders"])
+                        bl_pa[idx] = int(r["max_orders"])
         baseline_pk = json.dumps(bl_pk)
         baseline_pa = json.dumps(bl_pa)
+        hour_start = HOUR_START
         return f"""
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
   <div class="section-title" style="margin:0">Today \u2014 Hourly Breakdown</div>
@@ -1071,15 +1075,20 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
   var HLBLS = {hour_labels};
   var BL_PK = {baseline_pk};
   var BL_PA = {baseline_pa};
+  var HOUR_START = {hour_start};
   var hourlyChart = null;
 
   function agg(client) {{
     var data = (client === '__all__') ? RAW : RAW.filter(function(d){{ return d.c === client; }});
-    var pk = new Array(24).fill(0);
-    var pa = new Array(24).fill(0);
+    var n = 24 - HOUR_START;
+    var pk = new Array(n).fill(0);
+    var pa = new Array(n).fill(0);
     data.forEach(function(d) {{
-      if (d.t === 'Picking') pk[d.h] += d.n;
-      else pa[d.h] += d.n;
+      var i = d.h - HOUR_START;
+      if (i >= 0 && i < n) {{
+        if (d.t === 'Picking') pk[i] += d.n;
+        else pa[i] += d.n;
+      }}
     }});
     return {{pk: pk, pa: pa}};
   }}
