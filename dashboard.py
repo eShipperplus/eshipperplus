@@ -388,6 +388,39 @@ ORDER BY 1, 2
 """
 
 
+def _hourly_baseline_sql():
+    """Max orders picked/packed per hour across the last 45 business days — baseline target line."""
+    return f"""
+WITH daily_hourly AS (
+    SELECT
+        DATE(CONVERT_TIMEZONE('UTC', 'America/Toronto', wt.ActualFinishDateTime))  AS work_date,
+        HOUR(CONVERT_TIMEZONE('UTC', 'America/Toronto', wt.ActualFinishDateTime))  AS hour,
+        CASE wt.WarehouseTaskTypeId WHEN 1 THEN 'Picking' ELSE 'Packing' END       AS activitytype,
+        COUNT(DISTINCT wt.ShipmentOrderId)                                          AS orders
+    FROM {DB}.WAREHOUSETASK wt
+    INNER JOIN {DB}.SHIPMENTORDER so ON wt.ShipmentOrderId = so.Id AND so.Deleted = 0
+    INNER JOIN {DB}.CLIENT        c  ON so.ClientId        = c.Id  AND c.Deleted  = 0
+    WHERE wt.WarehouseTaskTypeId   IN (1, 6)
+      AND wt.WarehouseTaskStatusId = 3
+      AND wt.WarehouseId           = 26771
+      AND wt.Deleted               = 0
+      AND COALESCE(c.FullName, c.DisplayName) NOT ILIKE '%test%'
+      AND DATE(CONVERT_TIMEZONE('UTC', 'America/Toronto', wt.ActualFinishDateTime))
+              BETWEEN DATEADD(day, -60, CURRENT_DATE) AND DATEADD(day, -1, CURRENT_DATE)
+      AND DAYOFWEEK(DATE(CONVERT_TIMEZONE('UTC', 'America/Toronto', wt.ActualFinishDateTime)))
+              NOT IN (1, 7)   -- exclude Sunday=1 and Saturday=7
+    GROUP BY 1, 2, 3
+)
+SELECT
+    hour,
+    activitytype,
+    MAX(orders) AS max_orders
+FROM daily_hourly
+GROUP BY 1, 2
+ORDER BY 1, 2
+"""
+
+
 def _today_progress_sql(today_str):
     """
     UNION approach — orders appear TWICE if both picking and packing happened today.
@@ -866,7 +899,7 @@ def build_queue(df, urgency_fn, priority_df, now, tz, is_monday=False, suppress_
 
 def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                    ltl_pack, ltl_pick, ltl_nopack, today_df, hist_df,
-                   open_shortage_df, hourly_df,
+                   open_shortage_df, hourly_df, baseline_df,
                    now, filepath):
     """Generate a BI-style HTML dashboard: KPIs, pivot summaries, charts, detail tables."""
     import html as _html, json
@@ -990,27 +1023,44 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                 f'<canvas id="urgBar" height="110"></canvas></div>'
                 f'<script>{js}</script>')
 
-    def hourly_section(hdf):
-        """Client dropdown + hourly breakdown chart for today."""
+    def hourly_section(hdf, bdf=None):
+        """Client dropdown + hourly breakdown chart for today with historical baseline."""
         if hdf.empty:
             return '<p class="empty">No hourly data yet for today.</p>'
         clients = sorted(hdf["clientname"].dropna().unique().tolist())
         opts = '<option value="__all__">All Clients</option>' + "".join(
             f'<option value="{esc(c)}">{esc(c)}</option>' for c in clients
         )
-        # Serialize compact: list of [hour, activitytype, clientname, orders]
+        # Serialize today's data
         rows = hdf[["hour","activitytype","clientname","orders"]].copy()
         rows["hour"] = pd.to_numeric(rows["hour"], errors="coerce").fillna(0).astype(int)
         rows["orders"] = pd.to_numeric(rows["orders"], errors="coerce").fillna(0).astype(int)
         raw = json.dumps(rows.rename(columns={"hour":"h","activitytype":"t","clientname":"c","orders":"n"}).to_dict("records"))
         hour_labels = json.dumps([f"{h:02d}:00" for h in range(24)])
+        # Build baseline arrays: max pick/pack per hour from historical data
+        bl_pk = [0] * 24
+        bl_pa = [0] * 24
+        if bdf is not None and not bdf.empty:
+            bdf2 = bdf.copy()
+            bdf2["hour"] = pd.to_numeric(bdf2["hour"], errors="coerce").fillna(0).astype(int)
+            bdf2["max_orders"] = pd.to_numeric(bdf2["max_orders"], errors="coerce").fillna(0).astype(int)
+            for _, r in bdf2.iterrows():
+                h = int(r["hour"])
+                if 0 <= h < 24:
+                    if str(r.get("activitytype","")).lower() == "picking":
+                        bl_pk[h] = int(r["max_orders"])
+                    else:
+                        bl_pa[h] = int(r["max_orders"])
+        baseline_pk = json.dumps(bl_pk)
+        baseline_pa = json.dumps(bl_pa)
         return f"""
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
   <div class="section-title" style="margin:0">Today \u2014 Hourly Breakdown</div>
   <select id="clientSel" onchange="updateHourly(this.value)"
-    style="background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:.3rem .7rem;font-size:.82rem;cursor:pointer">
+    style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;border-radius:6px;padding:.3rem .7rem;font-size:.82rem;cursor:pointer">
     {opts}
   </select>
+  <span style="font-size:.75rem;color:#64748b">&#9643; Dashed line = 45-day peak baseline</span>
 </div>
 <div class="chart-box wide" style="margin-bottom:1rem;height:300px;position:relative">
   <canvas id="hourlyBar"></canvas>
@@ -1019,6 +1069,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 (function(){{
   var RAW = {raw};
   var HLBLS = {hour_labels};
+  var BL_PK = {baseline_pk};
+  var BL_PA = {baseline_pa};
   var hourlyChart = null;
 
   function agg(client) {{
@@ -1050,7 +1102,13 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       labels: HLBLS,
       datasets: [
         {{label:'Picked', data:v0.pk, backgroundColor:'rgba(34,197,94,0.75)', borderRadius:3}},
-        {{label:'Packed', data:v0.pa, backgroundColor:'rgba(59,130,246,0.75)', borderRadius:3}}
+        {{label:'Packed', data:v0.pa, backgroundColor:'rgba(59,130,246,0.75)', borderRadius:3}},
+        {{label:'Peak Pick (45d)', data:BL_PK, type:'line', borderColor:'rgba(34,197,94,0.9)',
+          backgroundColor:'transparent', borderWidth:2, borderDash:[5,4], pointRadius:3,
+          pointBackgroundColor:'rgba(34,197,94,0.9)', tension:0.3, order:0}},
+        {{label:'Peak Pack (45d)', data:BL_PA, type:'line', borderColor:'rgba(59,130,246,0.9)',
+          backgroundColor:'transparent', borderWidth:2, borderDash:[5,4], pointRadius:3,
+          pointBackgroundColor:'rgba(59,130,246,0.9)', tension:0.3, order:0}}
       ]
     }},
     options: {{
@@ -1058,13 +1116,14 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       maintainAspectRatio: false,
       interaction: {{mode:'index', intersect:false}},
       plugins: {{
-        legend: {{labels: {{color:'#94a3b8', boxWidth:12, font:{{size:11}}}}}},
+        legend: {{labels: {{color:'#64748b', boxWidth:12, font:{{size:11}}}}}},
         datalabels: {{
+          display: function(ctx) {{ return ctx.dataset.type !== 'line' && ctx.raw > 0; }},
           anchor: 'end',
           align: 'end',
           color: '#334155',
           font: {{size:9, weight:'600'}},
-          formatter: function(value) {{ return value > 0 ? value : ''; }},
+          formatter: function(value) {{ return value; }},
           offset: 2
         }}
       }},
@@ -1285,7 +1344,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
   {kpi(bp+bpa,"Breaching SLA","#d97706",onclick="showKpi('breaching_sla')")}
 </div>
 <div style="margin-top:1.5rem">
-  {hourly_section(hourly_df)}
+  {hourly_section(hourly_df, baseline_df)}
 </div>
 <div class="section-title" style="margin-top:1.5rem">Picking \u2014 Client Summary</div>
 <div class="pivot-row">
@@ -1346,7 +1405,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         ("ltlpk",  "LTL Picking",           mk_pick(ltl_pick,"LTL Picking",td_pk_ltl,td_pa_ltl), len(ltl_pick)),
         ("ltlpa",  "LTL Packing",           mk_pack(ltl_pack,"LTL Packing",td_pk_ltl,td_pa_ltl), len(ltl_pack)),
         ("ltlnp",  "LTL No-Pack \u26a0",    nopack_tab,                                       len(ltl_nopack)),
-        ("tr",     "Daily Trend",           hourly_section(hourly_df) + trend_chart(hist_df),  None),
+        ("tr",     "Daily Trend",           hourly_section(hourly_df, baseline_df) + trend_chart(hist_df),  None),
     ]
 
     def _nav_item(i, t):
@@ -1879,6 +1938,9 @@ def main():
     logger.info("Hourly breakdown today...")
     hourly_df = query_snowflake(_hourly_today_sql())
 
+    logger.info("Hourly baseline (45-day peak)...")
+    baseline_df = query_snowflake(_hourly_baseline_sql())
+
     # ── HTML Dashboard ────────────────────────────────────────────────────────
     logger.info("Writing HTML dashboard...")
     html_path = r"C:\Users\user\Desktop\Claude\wms_dashboard\wms_dashboard.html"
@@ -1887,7 +1949,7 @@ def main():
         spd_pack, spd_pick,
         ltl_pack, ltl_pick,
         ltl_nopack, today_df, final_hist,
-        open_shortage_df, hourly_df,
+        open_shortage_df, hourly_df, baseline_df,
         now, html_path
     )
     logger.info(f"  → HTML dashboard written → {html_path}")
