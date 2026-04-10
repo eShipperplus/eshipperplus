@@ -4431,10 +4431,14 @@ Object.assign(window, {
     showScanToast(code, 'Scanned — no match found');
   }
 
+  // Normalize for fuzzy barcode matching:
+  // "bin24-a-10" and "BIN24A10" both become "BIN24A10"
+  function norm(s) { return String(s || '').toUpperCase().replace(/[-_\s]/g, ''); }
+
   // ── Route to task by location name or reference data ────────────
   function routeScanToTask(code) {
     if (!window.state?.data?.jobs) return false;
-    const normalized = code.trim().toUpperCase();
+    const normalized = norm(code);
 
     // Search all assigned jobs for a location whose name or referenceData value matches
     for (const job of state.data.jobs) {
@@ -4447,10 +4451,8 @@ Object.assign(window, {
 
       for (const loc of (job.locations || [])) {
         if (loc.status === 'done') continue;
-        const nameMatch = (loc.name || '').toUpperCase() === normalized;
-        const refMatch = Object.values(loc.referenceData || {}).some(v =>
-          String(v).toUpperCase() === normalized
-        );
+        const nameMatch = norm(loc.name) === normalized;
+        const refMatch = Object.values(loc.referenceData || {}).some(v => norm(v) === normalized);
         if (nameMatch || refMatch) {
           showScanToast(code, `Found: ${loc.name} → opening task`);
           setTimeout(() => openMarkLocationDoneModal(job.id, loc.id), 400);
