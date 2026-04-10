@@ -389,7 +389,7 @@ ORDER BY 1, 2
 
 
 def _hourly_baseline_sql():
-    """Max orders picked/packed per hour across the last 45 business days — baseline target line."""
+    """90th-percentile orders picked/packed per hour across last 45 weekdays — baseline target line."""
     return f"""
 WITH daily_hourly AS (
     SELECT
@@ -408,13 +408,13 @@ WITH daily_hourly AS (
       AND DATE(CONVERT_TIMEZONE('UTC', 'America/Toronto', wt.ActualFinishDateTime))
               BETWEEN DATEADD(day, -60, CURRENT_DATE) AND DATEADD(day, -1, CURRENT_DATE)
       AND DAYOFWEEK(DATE(CONVERT_TIMEZONE('UTC', 'America/Toronto', wt.ActualFinishDateTime)))
-              NOT IN (1, 7)   -- exclude Sunday=1 and Saturday=7
+              NOT IN (0, 6)   -- exclude Sunday=0, Saturday=6 (Snowflake DAYOFWEEK)
     GROUP BY 1, 2, 3
 )
 SELECT
     hour,
     activitytype,
-    MAX(orders) AS max_orders
+    PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY orders) AS max_orders
 FROM daily_hourly
 GROUP BY 1, 2
 ORDER BY 1, 2
@@ -1060,7 +1060,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
     style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;border-radius:6px;padding:.3rem .7rem;font-size:.82rem;cursor:pointer">
     {opts}
   </select>
-  <span style="font-size:.75rem;color:#64748b">&#9643; Dashed line = 45-day peak baseline</span>
+  <span style="font-size:.75rem;color:#64748b">&#9643; Dashed = 45-day weekday 90th percentile target</span>
 </div>
 <div class="chart-box wide" style="margin-bottom:1rem;height:300px;position:relative">
   <canvas id="hourlyBar"></canvas>
@@ -1105,10 +1105,10 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
           borderWidth:2.5, pointRadius:4, pointBackgroundColor:'rgba(34,197,94,1)', tension:0.3, fill:true}},
         {{label:'Packed', data:v0.pa, borderColor:'rgba(59,130,246,1)', backgroundColor:'rgba(59,130,246,0.1)',
           borderWidth:2.5, pointRadius:4, pointBackgroundColor:'rgba(59,130,246,1)', tension:0.3, fill:true}},
-        {{label:'Peak Pick (45d)', data:BL_PK, borderColor:'rgba(34,197,94,0.45)',
+        {{label:'Target Pick (45d p90)', data:BL_PK, borderColor:'rgba(34,197,94,0.45)',
           backgroundColor:'transparent', borderWidth:1.5, borderDash:[5,4], pointRadius:2,
           pointBackgroundColor:'rgba(34,197,94,0.45)', tension:0.3}},
-        {{label:'Peak Pack (45d)', data:BL_PA, borderColor:'rgba(59,130,246,0.45)',
+        {{label:'Target Pack (45d p90)', data:BL_PA, borderColor:'rgba(59,130,246,0.45)',
           backgroundColor:'transparent', borderWidth:1.5, borderDash:[5,4], pointRadius:2,
           pointBackgroundColor:'rgba(59,130,246,0.45)', tension:0.3}}
       ]
