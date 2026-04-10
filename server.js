@@ -58,7 +58,7 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-app.use(express.json({ limit: '2mb' }));  // guard against oversized payloads
+app.use(express.json({ limit: '8mb' }));  // photos are base64 encoded, need headroom
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1174,11 +1174,14 @@ app.post('/api/jobs/:id/locations/:locId/photos', requireAuth, async (req, res) 
     const ext = imageData.startsWith('data:image/png') ? 'png' : 'jpg';
     const fileName = `jobs/${req.params.id}/locations/${req.params.locId}/${Date.now()}_${uid}.${ext}`;
     const file = bucket.file(fileName);
-    await file.save(buffer, {
-      metadata: { contentType: ext === 'png' ? 'image/png' : 'image/jpeg' },
+    const contentType = ext === 'png' ? 'image/png' : 'image/jpeg';
+    await file.save(buffer, { metadata: { contentType } });
+
+    // Generate a long-lived signed URL (10 years) — works with uniform bucket-level access
+    const [url] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 10 * 365 * 24 * 60 * 60 * 1000,
     });
-    await file.makePublic();
-    const url = `https://storage.googleapis.com/${STORAGE_BUCKET}/${fileName}`;
 
     // Append URL to the location's photos array
     const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
