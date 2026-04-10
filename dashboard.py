@@ -1097,18 +1097,20 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
   var v0 = agg('__all__');
   var ctx = document.getElementById('hourlyBar').getContext('2d');
   hourlyChart = new Chart(ctx, {{
-    type: 'bar',
+    type: 'line',
     data: {{
       labels: HLBLS,
       datasets: [
-        {{label:'Picked', data:v0.pk, backgroundColor:'rgba(34,197,94,0.75)', borderRadius:3}},
-        {{label:'Packed', data:v0.pa, backgroundColor:'rgba(59,130,246,0.75)', borderRadius:3}},
-        {{label:'Peak Pick (45d)', data:BL_PK, type:'line', borderColor:'rgba(34,197,94,0.9)',
-          backgroundColor:'transparent', borderWidth:2, borderDash:[5,4], pointRadius:3,
-          pointBackgroundColor:'rgba(34,197,94,0.9)', tension:0.3, order:0}},
-        {{label:'Peak Pack (45d)', data:BL_PA, type:'line', borderColor:'rgba(59,130,246,0.9)',
-          backgroundColor:'transparent', borderWidth:2, borderDash:[5,4], pointRadius:3,
-          pointBackgroundColor:'rgba(59,130,246,0.9)', tension:0.3, order:0}}
+        {{label:'Picked', data:v0.pk, borderColor:'rgba(34,197,94,1)', backgroundColor:'rgba(34,197,94,0.1)',
+          borderWidth:2.5, pointRadius:4, pointBackgroundColor:'rgba(34,197,94,1)', tension:0.3, fill:true}},
+        {{label:'Packed', data:v0.pa, borderColor:'rgba(59,130,246,1)', backgroundColor:'rgba(59,130,246,0.1)',
+          borderWidth:2.5, pointRadius:4, pointBackgroundColor:'rgba(59,130,246,1)', tension:0.3, fill:true}},
+        {{label:'Peak Pick (45d)', data:BL_PK, borderColor:'rgba(34,197,94,0.45)',
+          backgroundColor:'transparent', borderWidth:1.5, borderDash:[5,4], pointRadius:2,
+          pointBackgroundColor:'rgba(34,197,94,0.45)', tension:0.3}},
+        {{label:'Peak Pack (45d)', data:BL_PA, borderColor:'rgba(59,130,246,0.45)',
+          backgroundColor:'transparent', borderWidth:1.5, borderDash:[5,4], pointRadius:2,
+          pointBackgroundColor:'rgba(59,130,246,0.45)', tension:0.3}}
       ]
     }},
     options: {{
@@ -1118,9 +1120,9 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       plugins: {{
         legend: {{labels: {{color:'#64748b', boxWidth:12, font:{{size:11}}}}}},
         datalabels: {{
-          display: function(ctx) {{ return ctx.dataset.type !== 'line' && ctx.raw > 0; }},
-          anchor: 'end',
-          align: 'end',
+          display: function(ctx) {{ return ctx.datasetIndex < 2 && ctx.raw > 0; }},
+          anchor: 'top',
+          align: 'top',
           color: '#334155',
           font: {{size:9, weight:'600'}},
           formatter: function(value) {{ return value; }},
