@@ -262,7 +262,7 @@ tr:hover td { background: #f0f4ff; }
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, browserLocalPersistence, setPersistence } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
 // ── Firebase Config — replace with your project's config ──
 const FIREBASE_CONFIG = {
@@ -396,12 +396,27 @@ function showSigninError(msg) {
   el.style.display = 'block';
 }
 
+// Pre-fill saved credentials on page load
+(function() {
+  const saved = localStorage.getItem('wh_saved_creds');
+  if (saved) {
+    try {
+      const { email, password } = JSON.parse(saved);
+      if (email) document.getElementById('signin-email').value = email;
+      if (password) document.getElementById('signin-password').value = password;
+    } catch(e) {}
+  }
+})();
+
 document.getElementById('email-signin-btn').addEventListener('click', async () => {
   const email = document.getElementById('signin-email').value.trim();
   const password = document.getElementById('signin-password').value;
   if (!email || !password) { showSigninError('Enter email and password'); return; }
   try {
+    await setPersistence(firebaseAuth, browserLocalPersistence);
     await signInWithEmailAndPassword(firebaseAuth, email, password);
+    // Save credentials on the device so the form pre-fills next time
+    localStorage.setItem('wh_saved_creds', JSON.stringify({ email, password }));
   } catch (e) {
     showSigninError(e.code === 'auth/invalid-credential' ? 'Invalid email or password' : e.message);
   }
@@ -3615,8 +3630,10 @@ function openAddTaskModal(jobId) {
         <label>Reference Info <span style="font-weight:400;color:var(--text-light)">(optional — e.g. SKU, PO#)</span></label>
         <div id="new-task-refs">
           <div class="field-row" style="margin-bottom:6px">
-            <input type="text" placeholder="Label (e.g. SKU)" style="width:40%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
-            <input type="text" placeholder="Value" data-scan-target="1" style="width:55%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
+            <input type="text" placeholder="Label (e.g. Expiry Date)" oninput="onTaskRefLabelChange(this)"
+              style="width:38%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+            <input type="text" placeholder="Value" data-scan-target="1" data-ref-value="1"
+              style="width:53%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
           </div>
         </div>
         <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px" onclick="addNewTaskRefRow()">+ Add field</button>
@@ -3629,6 +3646,27 @@ function openAddTaskModal(jobId) {
   setTimeout(() => document.getElementById('new-task-name')?.focus(), 100);
 }
 
+// Returns true if label looks like a date field
+function isDateLabel(label) {
+  return /date|expir|exp\b|mfg|manufactur|best.?before|bb|born|dob/i.test(label);
+}
+
+// When label changes, swap value input type if it looks like a date field
+function onTaskRefLabelChange(labelEl) {
+  const row = labelEl.closest('.field-row');
+  const valueEl = row?.querySelector('[data-ref-value]');
+  if (!valueEl) return;
+  if (isDateLabel(labelEl.value)) {
+    valueEl.type = 'date';
+    valueEl.removeAttribute('data-scan-target');
+    valueEl.placeholder = 'YYYYMMDD';
+  } else {
+    valueEl.type = 'text';
+    valueEl.setAttribute('data-scan-target', '1');
+    valueEl.placeholder = 'Value';
+  }
+}
+
 function addNewTaskRefRow() {
   const container = document.getElementById('new-task-refs');
   if (!container) return;
@@ -3636,8 +3674,10 @@ function addNewTaskRefRow() {
   row.className = 'field-row';
   row.style.marginBottom = '6px';
   row.innerHTML = `
-    <input type="text" placeholder="Label" style="width:40%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
-    <input type="text" placeholder="Value" data-scan-target="1" style="width:55%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
+    <input type="text" placeholder="Label (e.g. Expiry Date)" oninput="onTaskRefLabelChange(this)"
+      style="width:38%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+    <input type="text" placeholder="Value" data-scan-target="1" data-ref-value="1"
+      style="width:53%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
     <button type="button" onclick="this.parentElement.remove()" style="background:none;border:none;color:var(--danger);font-size:16px;cursor:pointer;flex-shrink:0">✕</button>`;
   container.appendChild(row);
 }
@@ -3652,9 +3692,12 @@ async function submitAddTask(jobId) {
   const referenceData = {};
   document.querySelectorAll('#new-task-refs .field-row').forEach(row => {
     const [labelEl, valueEl] = row.querySelectorAll('input');
-    if (labelEl?.value.trim() && valueEl?.value.trim()) {
-      referenceData[labelEl.value.trim()] = valueEl.value.trim();
-    }
+    const label = labelEl?.value.trim();
+    let value = valueEl?.value.trim();
+    if (!label || !value) return;
+    // Convert date picker value (YYYY-MM-DD) to YYYYMMDD
+    if (valueEl.type === 'date' && value) value = value.replace(/-/g, '');
+    referenceData[label] = value;
   });
 
   const newLoc = {
@@ -4411,7 +4454,7 @@ Object.assign(window, {
   addLocationRow, handleLocationCSV, showAssignLocationsModal, submitAssignLocations,
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect, editDoneTask,
-  openAddTaskModal, addNewTaskRefRow, submitAddTask,
+  openAddTaskModal, addNewTaskRefRow, submitAddTask, onTaskRefLabelChange,
   exportJobLocations, uploadLocationsToJob,
   deleteJob, cloneJob, cancelJob, navToJobsFilter, exportJobsExcel, applyAnalyticsFilter, applyJobsFilter, resetJobsFilter, jobsPagePrev, jobsPageNext,
   updateSelfLogFields, updateCreateJobFields,
