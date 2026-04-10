@@ -638,7 +638,15 @@ function renderView() {
   else if (view === 'self-log') content.innerHTML = renderSelfLog();
   else if (view === 'create-job') content.innerHTML = renderCreateJob();
   else if (view === 'customers') content.innerHTML = renderCustomers();
-  else if (view === 'rates') content.innerHTML = renderRateCards();
+  else if (view === 'rates') {
+    content.innerHTML = renderRateCards();
+    // Auto-select first customer so rates are visible immediately
+    const sel = document.getElementById('rate-customer');
+    if (sel && state.data.customers.length) {
+      sel.value = state.data.customers[0];
+      renderRateTable();
+    }
+  }
   else if (view === 'jobtypes') content.innerHTML = renderJobTypes();
   else if (view === 'users') content.innerHTML = renderUsersTeams();
   else if (view === 'templates') content.innerHTML = renderTemplates();
@@ -1170,7 +1178,7 @@ function renderAllJobs() {
       </div>
       <div class="tbl-wrap">
         <table id="all-jobs-table">
-          <thead><tr><th>#</th><th>Customer</th><th>Type</th><th>Status</th><th>Billable</th><th>Created</th><th>Created By</th><th>Assigned To</th><th>Revenue</th><th>Rating</th><th style="min-width:160px">Actions</th></tr></thead>
+          <thead><tr><th>#</th><th>Customer</th><th>Type</th><th>Status</th>${state.user.role==='admin'?'<th>Billable</th>':''}<th>Created</th><th>Created By</th><th>Assigned To</th>${state.user.role==='admin'?'<th>Revenue</th><th>Rating</th>':''}<th style="min-width:160px">Actions</th></tr></thead>
           <tbody>${renderJobRows(pageJobs)}</tbody>
         </table>
       </div>
@@ -1179,19 +1187,20 @@ function renderAllJobs() {
 }
 
 function renderJobRows(jobs) {
-  if (!jobs.length) return '<tr><td colspan="11" class="empty-state">No jobs found</td></tr>';
+  const isAdmin = state.user.role === 'admin';
+  const colCount = isAdmin ? 11 : 8;
+  if (!jobs.length) return `<tr><td colspan="${colCount}" class="empty-state">No jobs found</td></tr>`;
   const canAssign = ['admin','manager','office_support'].includes(state.user.role);
   return jobs.map(j=>`<tr>
     <td><span style="font-weight:700;color:var(--primary);font-size:12px;white-space:nowrap">${j.jobNumber||''}</span></td>
     <td>${j.customerId}</td>
     <td>${jtBadge(j.jobTypeId)}</td>
     <td>${statusBadge(j.status)}${dueBadge(j)}${(j.locations||[]).length ? `<span style="font-size:11px;color:var(--text-light);margin-left:5px">${(j.locations||[]).filter(l=>l.status==='done').length}/${(j.locations||[]).length}</span>` : ''}</td>
-    <td>${j.billable?'✅':'❌'}</td>
+    ${isAdmin ? `<td>${j.billable?'✅':'❌'}</td>` : ''}
     <td>${fmtDate(j.createdAt)}</td>
     <td>${j.createdByName||'—'}</td>
     <td style="font-size:12px">${[j.assignedManagerName ? `<span style="color:var(--text-light)">Mgr:</span> ${j.assignedManagerName}` : '', (j.assignedAssocNames||[]).length ? `<span style="color:var(--text-light)">Assoc:</span> ${j.assignedAssocNames.join(', ')}` : ''].filter(Boolean).join('<br>') || '—'}</td>
-    <td>${fmt(j.revenue)}</td>
-    <td>${ratingBadge(j.rating)}</td>
+    ${isAdmin ? `<td>${fmt(j.revenue)}</td><td>${ratingBadge(j.rating)}</td>` : ''}
     <td style="white-space:nowrap">
       <div style="display:flex;gap:4px;flex-wrap:wrap">
         <button class="btn btn-primary btn-sm" onclick="openJobModal('${j.id}')">View</button>
@@ -1418,10 +1427,10 @@ function renderSelfLog() {
           <label>Notes</label>
           <textarea name="notes" rows="2"></textarea>
         </div>
-        <div class="toggle-row">
+        ${['admin','manager'].includes(state.user.role)?`<div class="toggle-row">
           <label class="toggle"><input type="checkbox" name="billable" checked/><span class="toggle-slider"></span></label>
           <span>Billable</span>
-        </div>
+        </div>`:''}
         <div style="margin-top:16px;display:flex;gap:10px">
           <button type="submit" class="btn btn-primary">Save & Complete</button>
         </div>
@@ -1478,10 +1487,10 @@ function renderCreateJob() {
           <div id="cj-loc-csv-info" style="display:none;font-size:12px;color:var(--text-light);margin-bottom:8px"></div>
           <div id="cj-locations-list"></div>
         </div>
-        <div class="toggle-row">
+        ${['admin','manager'].includes(state.user.role)?`<div class="toggle-row">
           <label class="toggle"><input type="checkbox" name="billable" checked/><span class="toggle-slider"></span></label>
           <span>Billable</span>
-        </div>
+        </div>`:''}
         <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
           <button type="submit" class="btn btn-primary">Create Job</button>
           <button type="button" class="btn btn-ghost btn-sm" onclick="openSaveTemplateModal()">💾 Save as Template</button>
@@ -2806,7 +2815,7 @@ async function submitSelfLog(e) {
   const fields = collectFields(form, getJobFields(jobTypeId));
   const body = {
     jobTypeId, customerId, fields,
-    billable: form.billable.checked,
+    billable: ['admin','manager'].includes(state.user.role) ? (form.billable?.checked ?? true) : true,
     dueDate: form.dueDate.value || null,
     notes: form.notes.value,
   };
@@ -2840,15 +2849,17 @@ async function submitSelfLog(e) {
 }
 
 function showRatingResult(job) {
+  const isAdmin = state.user.role === 'admin';
   const cls = `rating-${job.rating||'needs_improvement'}`;
   const emoji = job.rating === 'great' ? '🌟' : job.rating === 'good' ? '👍' : '⚠️';
   const overlay = showModal(`
     <div class="modal-header"><h2>Job Completed!</h2><button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button></div>
     <div class="modal-body">
       <div class="${cls} rating-result">
-        <h3>${emoji} ${(job.rating||'').replace(/_/g,' ').toUpperCase()}</h3>
+        <h3>✅ Job marked as complete</h3>
+        ${isAdmin ? `<h3>${emoji} ${(job.rating||'').replace(/_/g,' ').toUpperCase()}</h3>
         <p>Revenue: ${fmt(job.revenue)} | Cost: ${fmt(job.cost)} | Profit: ${fmt(job.profit)}</p>
-        <p>Margin: ${fmtPct(job.marginPct)}</p>
+        <p>Margin: ${fmtPct(job.marginPct)}</p>` : ''}
       </div>
     </div>
     <div class="modal-footer"><button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();renderView()">Done</button></div>`);
@@ -3013,7 +3024,7 @@ async function submitCreateJob(e) {
     customerId,
     fields: fieldVals,
     assignedManagerId: form.assignedManagerId.value || null,
-    billable: form.billable.checked,
+    billable: ['admin','manager'].includes(state.user.role) ? (form.billable?.checked ?? true) : true,
     dueDate: form.dueDate.value || null,
     notes: form.notes.value,
     instructions: form.instructions.value,
@@ -3048,14 +3059,14 @@ async function openJobModal(jobId) {
     <div class="modal-body">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;font-size:13px">
         <div><strong>Status:</strong> ${statusBadge(job.status)}</div>
-        <div><strong>Billable:</strong> ${job.billable?'Yes':'No'}</div>
+        ${state.user.role==='admin'?`<div><strong>Billable:</strong> ${job.billable?'Yes':'No'}</div>`:''}
         <div><strong>Created by:</strong> ${job.createdByName||'—'}</div>
         <div><strong>Created:</strong> ${fmtDate(job.createdAt)}</div>
         <div><strong>Manager:</strong> ${job.assignedManagerName||'—'}</div>
         <div><strong>Associates:</strong> ${(job.assignedAssocNames||[]).join(', ')||'—'}</div>
         ${job.completedByName?`<div><strong>Completed by:</strong> ${job.completedByName}</div><div><strong>Completed:</strong> ${fmtDate(job.completedAt)}</div>`:''}
-        ${job.revenue!=null?`<div><strong>Revenue:</strong> ${fmt(job.revenue)}</div><div><strong>Profit:</strong> ${fmt(job.profit)}</div>`:''}
-        ${job.rating?`<div><strong>Rating:</strong> ${ratingBadge(job.rating)}</div><div><strong>Margin:</strong> ${fmtPct(job.marginPct)}</div>`:''}
+        ${state.user.role==='admin' && job.revenue!=null?`<div><strong>Revenue:</strong> ${fmt(job.revenue)}</div><div><strong>Profit:</strong> ${fmt(job.profit)}</div>`:''}
+        ${state.user.role==='admin' && job.rating?`<div><strong>Rating:</strong> ${ratingBadge(job.rating)}</div><div><strong>Margin:</strong> ${fmtPct(job.marginPct)}</div>`:''}
       </div>
       <div style="font-size:13px"><strong>Fields:</strong></div>
       <div style="background:var(--grey);border-radius:7px;padding:10px;margin-top:6px;font-size:13px">
@@ -3163,10 +3174,10 @@ async function showEditJobModal(jobId) {
       </form>
       <div class="form-group" style="margin-top:12px"><label>Notes</label>
         <textarea id="ej-notes" rows="3">${job.notes||''}</textarea></div>
-      <div class="toggle-row" style="margin-top:8px">
+      ${state.user.role==='admin'?`<div class="toggle-row" style="margin-top:8px">
         <label class="toggle"><input type="checkbox" id="ej-billable" ${job.billable?'checked':''}/><span class="toggle-slider"></span></label>
         <span>Billable</span>
-      </div>
+      </div>`:''}
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="submitEditJob('${jobId}')">Save Changes</button>
@@ -3183,7 +3194,7 @@ async function submitEditJob(jobId) {
   const body = {
     fields: fieldVals,
     notes: document.getElementById('ej-notes')?.value.trim() || '',
-    billable: document.getElementById('ej-billable')?.checked ?? true,
+    billable: state.user.role==='admin' ? (document.getElementById('ej-billable')?.checked ?? true) : undefined,
     dueDate: document.getElementById('ej-due')?.value || null,
   };
   // Update customer if changed
@@ -3232,10 +3243,10 @@ async function openCompleteModal(jobId) {
     <div class="modal-body">
       <form id="complete-form">
         ${renderFieldInputs(fields, job.fields||{})}
-        <div class="toggle-row">
+        ${state.user.role==='admin'?`<div class="toggle-row">
           <label class="toggle"><input type="checkbox" name="billable" ${job.billable?'checked':''}/><span class="toggle-slider"></span></label>
           <span>Billable</span>
-        </div>
+        </div>`:''}
         ${state.user.role==='manager'||state.user.role==='admin' ? `
         <div class="form-group" style="margin-top:12px"><label>Manager Notes</label>
           <textarea id="manager-notes" rows="3" placeholder="Add review comments…" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical">${job.managerNotes||''}</textarea>
@@ -3254,7 +3265,7 @@ async function submitComplete(jobId) {
   if (!job) return;
   const fields = getJobFields(job.jobTypeId);
   const fieldVals = collectFields(form, fields);
-  const billable = form.querySelector('[name=billable]').checked;
+  const billable = state.user.role==='admin' ? (form.querySelector('[name=billable]')?.checked ?? true) : undefined;
 
   const btn = document.getElementById('complete-submit-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
@@ -3291,10 +3302,10 @@ async function openSubmitReviewModal(jobId) {
     <div class="modal-body">
       <form id="review-submit-form">
         ${renderFieldInputs(fields, job.fields||{})}
-        <div class="toggle-row">
+        ${state.user.role==='admin'?`<div class="toggle-row">
           <label class="toggle"><input type="checkbox" name="billable" ${job.billable?'checked':''}/><span class="toggle-slider"></span></label>
           <span>Billable</span>
-        </div>
+        </div>`:''}
         <div class="form-group" style="margin-top:12px"><label>Your Notes <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
           <textarea id="assoc-notes" rows="3" placeholder="Add any comments for the manager…" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical"></textarea>
         </div>
@@ -3312,7 +3323,7 @@ async function submitForReview(jobId) {
   if (!job) return;
   const fields = getJobFields(job.jobTypeId);
   const fieldVals = collectFields(form, fields);
-  const billable = form.querySelector('[name=billable]').checked;
+  const billable = state.user.role==='admin' ? (form.querySelector('[name=billable]')?.checked ?? true) : undefined;
   const associateNotes = document.getElementById('assoc-notes')?.value || '';
   const btn = document.getElementById('review-submit-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
@@ -3350,10 +3361,10 @@ async function openReviewCompleteModal(jobId) {
       </div>
       <form id="review-complete-form">
         ${renderFieldInputs(fields, job.fields||{})}
-        <div class="toggle-row">
+        ${state.user.role==='admin'?`<div class="toggle-row">
           <label class="toggle"><input type="checkbox" name="billable" ${job.billable?'checked':''}/><span class="toggle-slider"></span></label>
           <span>Billable</span>
-        </div>
+        </div>`:''}
         <div class="form-group" style="margin-top:12px"><label>Manager Notes <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
           <textarea id="mgr-review-notes" rows="3" placeholder="Add review comments…" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical">${job.managerNotes||''}</textarea>
         </div>
@@ -3371,7 +3382,7 @@ async function submitReviewComplete(jobId) {
   if (!job) return;
   const fields = getJobFields(job.jobTypeId);
   const fieldVals = collectFields(form, fields);
-  const billable = form.querySelector('[name=billable]').checked;
+  const billable = state.user.role==='admin' ? (form.querySelector('[name=billable]')?.checked ?? true) : undefined;
   const managerNotes = document.getElementById('mgr-review-notes')?.value || '';
   const btn = document.getElementById('review-complete-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
@@ -4228,6 +4239,13 @@ function exportJobsExcel(btn) {
       'Completed Date': tsStr(j.completedAt),
       'Cancelled Date': tsStr(j.cancelledAt),
     }));
+
+    if (state.user.role !== 'admin') {
+      rows.forEach(row => {
+        delete row['Revenue ($)']; delete row['Cost ($)']; delete row['Profit ($)'];
+        delete row['Margin (%)']; delete row['Rating']; delete row['Billable'];
+      });
+    }
 
     const ws = XLSX.utils.json_to_sheet(rows);
 

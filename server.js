@@ -820,8 +820,8 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
   }
 });
 
-// Manager saves location assignments
-app.put('/api/jobs/:id/locations', requireAuth, requireRole('manager', 'admin', 'office_support'), async (req, res) => {
+// Manager saves location assignments; assigned associates can append new tasks
+app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
   try {
     const { user, uid } = req;
     const { locations } = req.body;
@@ -829,6 +829,21 @@ app.put('/api/jobs/:id/locations', requireAuth, requireRole('manager', 'admin', 
     const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
     if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
     const job = jobSnap.data();
+
+    const isManagerOrAbove = ['manager', 'admin', 'office_support'].includes(user.role);
+    const isAssignedAssoc = (job.assignedAssocId || []).includes(uid);
+    if (!isManagerOrAbove && !isAssignedAssoc) {
+      return res.status(403).json({ error: 'Not authorized to modify tasks on this job' });
+    }
+    // Associates can only append NEW locations, not modify existing ones
+    if (!isManagerOrAbove && isAssignedAssoc) {
+      const existingIds = new Set((job.locations || []).map(l => l.id));
+      const modifiesExisting = locations.some(l => existingIds.has(l.id));
+      if (modifiesExisting) {
+        return res.status(403).json({ error: 'Associates can only add new tasks, not modify existing ones' });
+      }
+    }
+
     // Merge assignments into existing locations (preserve status/notes)
     const existing = job.locations || [];
     const merged = locations.map(l => {
@@ -914,12 +929,21 @@ app.put('/api/jobs/:id/submit-review', requireAuth, async (req, res) => {
     const canSubmit = (job.assignedAssocId || []).includes(uid) || job.createdBy === uid;
     if (!canSubmit) return res.status(403).json({ error: 'Not assigned to this job' });
 
+    // Gate: all assigned locations must be done before submitting for review
+    const locations = job.locations || [];
+    if (locations.length > 0) {
+      const pending = locations.filter(l => l.status !== 'done');
+      if (pending.length > 0) {
+        return res.status(400).json({ error: `${pending.length} task(s) not yet marked done. Complete all tasks before submitting for review.` });
+      }
+    }
+
     const { fields, billable, associateNotes } = req.body;
     const mergedFields = { ...job.fields, ...(fields || {}) };
     const now = Timestamp.now();
     const update = {
       fields: mergedFields,
-      billable: billable !== undefined ? billable : job.billable,
+      billable: (user.role === 'admin' && billable !== undefined) ? billable : job.billable,
       associateNotes: associateNotes || '',
       status: 'pending_review',
       submittedBy: uid,
@@ -958,6 +982,15 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
 
     if (!canComplete) return res.status(403).json({ error: 'Cannot complete this job' });
 
+    // Gate: all locations must be done before completing (admin can override)
+    const locations = job.locations || [];
+    if (locations.length > 0 && user.role !== 'admin') {
+      const pending = locations.filter(l => l.status !== 'done');
+      if (pending.length > 0) {
+        return res.status(400).json({ error: `${pending.length} task(s) not yet marked done. All tasks must be completed first.` });
+      }
+    }
+
     const { fields, billable, managerNotes } = req.body;
     const mergedFields = { ...job.fields, ...(fields || {}) };
 
@@ -969,7 +1002,7 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
     const now = Timestamp.now();
     const update = {
       fields: mergedFields,
-      billable: billable !== undefined ? billable : job.billable,
+      billable: (user.role === 'admin' && billable !== undefined) ? billable : job.billable,
       managerNotes: managerNotes !== undefined ? managerNotes : (job.managerNotes || ''),
       status: 'completed',
       completedBy: uid,
