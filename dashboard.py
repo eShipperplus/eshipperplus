@@ -618,9 +618,10 @@ WITH daily_tasks AS (
 ),
 daily_alloc AS (
     -- Orders allocated each day = proxy for that day's incoming workload volume
+    -- ShipmentOrderDate is already a DATE field (Toronto time), no conversion needed
     SELECT
-        DATE(CONVERT_TIMEZONE('UTC','America/Toronto', so.AllocationDateTime)) AS AllocDate,
-        COUNT(DISTINCT so.Id) AS DailyAllocated
+        so.ShipmentOrderDate                AS AllocDate,
+        COUNT(DISTINCT so.Id)               AS DailyAllocated
     FROM {DB}.SHIPMENTORDER so
     INNER JOIN {DB}.SHIPMENTORDERTYPE sot ON so.ShipmentOrderTypeId = sot.Id
     INNER JOIN {DB}.CLIENT c              ON so.ClientId             = c.Id AND c.Deleted = 0
@@ -629,8 +630,7 @@ daily_alloc AS (
       AND (sot.Name ILIKE '%D2C%' OR sot.Name ILIKE '%SPD%' OR sot.Name ILIKE '%LTL%')
       AND COALESCE(c.FullName, c.DisplayName) NOT ILIKE '%test%'
       AND so.WarehouseId = 26771
-      AND DATE(CONVERT_TIMEZONE('UTC','America/Toronto', so.AllocationDateTime))
-            >= DATEADD(day, -60, CURRENT_DATE())
+      AND so.ShipmentOrderDate >= DATEADD(day, -60, CURRENT_DATE())
     GROUP BY AllocDate
 )
 SELECT
