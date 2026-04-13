@@ -95,12 +95,18 @@ LOGIWA_SCAN_PAGES    = 100   # max pages to scan (100 × 50 = 5 000 most-recent 
 LOGIWA_MAX_SCAN_SECS = 25    # hard wall-clock budget — never block dashboard longer than this
 
 
-def fetch_on_hold_codes(queue_codes: set = None) -> set:
-    """Scan Logiwa API (newest-first pages) for orders tagged ON HOLD.
+def fetch_on_hold_codes(spd_ltl_codes: set = None) -> set:
+    """Find orders tagged ON HOLD in Logiwa.
 
-    Hard wall-clock budget of LOGIWA_MAX_SCAN_SECS so this never hangs the
-    dashboard.  Scans up to LOGIWA_SCAN_PAGES pages × 50 orders each.
-    The queue_codes parameter is accepted but ignored (kept for call-site compat).
+    Strategy (in order):
+    1. TARGETED: if spd_ltl_codes provided (SPD + LTL queue codes only —
+       typically < 300), look up each code directly via POST body filter.
+       These queues are small enough to finish well within the time budget,
+       and targeted lookup works regardless of how old the order is.
+    2. PAGE SCAN fallback: scan the LOGIWA_SCAN_PAGES newest pages when
+       no codes are provided or targeted lookup fails immediately.
+
+    Both paths respect LOGIWA_MAX_SCAN_SECS hard wall-clock budget.
     """
     import ssl, urllib.request as _ur, json as _json, time as _time
     ctx = ssl.create_default_context()
@@ -113,28 +119,56 @@ def fetch_on_hold_codes(queue_codes: set = None) -> set:
         with _ur.urlopen(auth_req, timeout=15, context=ctx) as r:
             token = _json.loads(r.read())["token"]
 
-        hdrs = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-        on_hold = set()
+        hdrs = {"Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"}
+        on_hold  = set()
         deadline = _time.monotonic() + LOGIWA_MAX_SCAN_SECS
 
-        for page in range(LOGIWA_SCAN_PAGES):
-            if _time.monotonic() > deadline:
-                logger.warning(f"Logiwa scan: time budget reached at page {page}, stopping")
-                break
-            req = _ur.Request(
-                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/50",
-                headers=hdrs
-            )
-            with _ur.urlopen(req, timeout=10, context=ctx) as r:
-                data = _json.loads(r.read()).get("data", [])
-            if not data:
-                break
-            for order in data:
-                tags = [t.get("name", "").upper() for t in order.get("tags", [])]
-                if ON_HOLD_TAG in tags:
-                    on_hold.add(order["code"])
+        if spd_ltl_codes:
+            # ── Targeted per-code lookup (SPD+LTL only — small set) ───────────
+            checked = 0
+            for code in spd_ltl_codes:
+                if _time.monotonic() > deadline:
+                    logger.warning(f"Logiwa targeted scan: time budget reached after {checked} codes")
+                    break
+                try:
+                    body = _json.dumps({"Code": code}).encode()
+                    req  = _ur.Request(
+                        f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/0/s/5",
+                        data=body, headers=hdrs
+                    )
+                    with _ur.urlopen(req, timeout=5, context=ctx) as r:
+                        rows = _json.loads(r.read()).get("data", [])
+                    for order in rows:
+                        if order.get("code", "").upper() == code.upper():
+                            tags = [t.get("name", "").upper() for t in order.get("tags", [])]
+                            if ON_HOLD_TAG in tags:
+                                on_hold.add(code)
+                    checked += 1
+                except Exception as ex:
+                    logger.debug(f"Logiwa lookup failed for {code}: {ex}")
+            logger.info(f"Logiwa targeted scan: checked {checked}/{len(spd_ltl_codes)} SPD/LTL codes, found {len(on_hold)} ON HOLD")
+        else:
+            # ── Page-scan fallback ────────────────────────────────────────────
+            for page in range(LOGIWA_SCAN_PAGES):
+                if _time.monotonic() > deadline:
+                    logger.warning(f"Logiwa page scan: time budget reached at page {page}")
+                    break
+                req = _ur.Request(
+                    f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/50",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
+                )
+                with _ur.urlopen(req, timeout=10, context=ctx) as r:
+                    data = _json.loads(r.read()).get("data", [])
+                if not data:
+                    break
+                for order in data:
+                    tags = [t.get("name", "").upper() for t in order.get("tags", [])]
+                    if ON_HOLD_TAG in tags:
+                        on_hold.add(order["code"])
+            logger.info(f"Logiwa page scan: found {len(on_hold)} ON HOLD orders")
 
-        logger.info(f"Logiwa ON HOLD codes fetched: {len(on_hold)} orders")
         return on_hold
 
     except Exception as e:
@@ -1234,30 +1268,48 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 
     def _vol_adj_targets(df_daily):
         """
-        Compute volume-adjusted pick/pack targets from historical data.
-        Uses days OLDER than the last 15 (the baseline window: days 16-60).
-        Baseline = p75 efficiency rate (picks / daily_allocated) on weekdays
-                   with sufficient volume.  Returns (eff_pick, eff_pack) floats,
-                   or (None, None) if not enough data.
-        Target for a display day = efficiency × that day's DailyAllocated.
-        This is "fair" because high-volume days get a higher absolute target.
+        Compute pick/pack target lines from historical data (days 16-60, weekdays only).
+
+        Two modes:
+        • Volume-adjusted (preferred): target = p75_efficiency × that_day's_allocations.
+          Requires dailyallocated > 30 for ≥ 5 baseline days so the ratio is meaningful.
+          Fair because busier days get proportionally higher targets.
+        • Flat p75 (fallback): target = p75 of raw historical picks/packs.
+          Used when allocation data is sparse (ShipmentOrderDate ≠ WorkDate mismatch).
+
+        Returns (mode, val_pick, val_pack):
+          mode = "vol"  → val = efficiency ratio (multiply by display day's allocation)
+          mode = "flat" → val = absolute target (same line every day)
+          mode = None   → not enough data, no target lines
         """
         for col in ["totalpicked", "totalpacked", "dailyallocated"]:
             if col not in df_daily.columns:
                 df_daily[col] = 0
             df_daily[col] = pd.to_numeric(df_daily[col], errors="coerce").fillna(0)
+
         all_sorted = df_daily.sort_values("workdate")
-        baseline = all_sorted.iloc[:-15] if len(all_sorted) > 15 else pd.DataFrame()
+        baseline   = all_sorted.iloc[:-15].copy() if len(all_sorted) > 15 else pd.DataFrame()
         if baseline.empty:
-            return None, None
+            return None, None, None
+
         bl = baseline.copy()
         bl["_dow"] = pd.to_datetime(bl["workdate"], errors="coerce").dt.dayofweek  # 0=Mon 6=Sun
-        bl = bl[(bl["_dow"] < 5) & (bl["dailyallocated"] > 30)]   # weekdays, min 30 allocations
-        if len(bl) < 5:
-            return None, None
-        eff_pick = (bl["totalpicked"] / bl["dailyallocated"]).quantile(0.75)
-        eff_pack = (bl["totalpacked"] / bl["dailyallocated"]).quantile(0.75)
-        return float(eff_pick), float(eff_pack)
+        bl_wd = bl[bl["_dow"] < 5]   # weekdays only
+
+        if len(bl_wd) < 5:
+            return None, None, None
+
+        # Try volume-adjusted first
+        bl_vol = bl_wd[bl_wd["dailyallocated"] > 30]
+        if len(bl_vol) >= 5:
+            eff_pick = (bl_vol["totalpicked"] / bl_vol["dailyallocated"]).quantile(0.75)
+            eff_pack = (bl_vol["totalpacked"] / bl_vol["dailyallocated"]).quantile(0.75)
+            return "vol", float(eff_pick), float(eff_pack)
+
+        # Fallback: flat p75 of raw picks/packs
+        flat_pick = bl_wd["totalpicked"].quantile(0.75)
+        flat_pack = bl_wd["totalpacked"].quantile(0.75)
+        return "flat", float(flat_pick), float(flat_pack)
 
     def trend_chart(df):
         if df.empty: return '<p class="empty">No history data.</p>'
@@ -1266,7 +1318,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         if daily.empty: return '<p class="empty">No daily history yet.</p>'
 
         # Compute fair baselines from older history, display last 15 days
-        eff_pk, eff_pa = _vol_adj_targets(daily)
+        tgt_mode, tgt_pk_val, tgt_pa_val = _vol_adj_targets(daily)
         display = daily.tail(15).copy()
 
         lbl = json.dumps(display["workdate"].tolist())
@@ -1276,17 +1328,25 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         spd = json.dumps(pd.to_numeric(display.get("spd_picked", 0), errors="coerce").fillna(0).astype(int).tolist())
         ltl = json.dumps(pd.to_numeric(display.get("ltl_picked", 0), errors="coerce").fillna(0).astype(int).tolist())
 
-        def _tgt_series(eff):
-            if eff is None: return "[]"
-            allocs = pd.to_numeric(display.get("dailyallocated", 0), errors="coerce").fillna(0)
-            vals = [round(eff * a) if a > 30 else None for a in allocs]
-            return json.dumps(vals)
+        def _tgt_series(val):
+            if val is None: return "[]"
+            if tgt_mode == "vol":
+                # Volume-adjusted: target scales with daily allocation volume
+                allocs = pd.to_numeric(display.get("dailyallocated", 0), errors="coerce").fillna(0)
+                return json.dumps([round(val * a) if a > 30 else None for a in allocs])
+            else:
+                # Flat p75: same target every day
+                return json.dumps([round(val)] * len(display))
 
-        tpk = _tgt_series(eff_pk)
-        tpa = _tgt_series(eff_pa)
-        has_tgt = eff_pk is not None
-        eff_pct = f"{eff_pk:.0%}" if eff_pk else ""
-        tgt_note = f' <span style="font-size:0.75rem;color:#64748b">(target = {eff_pct} of daily volume, p75 of last 45d weekdays)</span>' if has_tgt else ""
+        tpk = _tgt_series(tgt_pk_val)
+        tpa = _tgt_series(tgt_pa_val)
+        has_tgt = tgt_mode is not None
+        if tgt_mode == "vol":
+            tgt_note = f' <span style="font-size:0.75rem;color:#64748b">(target = {tgt_pk_val:.0%} of daily volume · p75 of last 45d weekdays)</span>'
+        elif tgt_mode == "flat":
+            tgt_note = f' <span style="font-size:0.75rem;color:#64748b">(target = p75 of last 45d weekdays · {round(tgt_pk_val):,} pick / {round(tgt_pa_val):,} pack)</span>'
+        else:
+            tgt_note = ""
 
         return f"""
 <div class="chart-row">
@@ -2148,8 +2208,14 @@ def main():
     _all_queue_frames = [f for f in [d2c_pick, d2c_pack, spd_pick, spd_pack,
                                      ltl_pick, ltl_pack, ltl_nopack] if not f.empty]
     _all_queue = pd.concat(_all_queue_frames, ignore_index=True) if _all_queue_frames else pd.DataFrame()
-    logger.info("Fetching ON HOLD order codes from Logiwa (page scan, max 25s)...")
-    on_hold_codes = fetch_on_hold_codes()
+    # Use targeted lookup for SPD+LTL only (small queue, works on old orders).
+    # D2C is excluded — too large. ON HOLD orders observed so far are SPD/LTL.
+    _spd_ltl_codes = set()
+    for _f in [spd_pick, spd_pack, ltl_pick, ltl_pack, ltl_nopack]:
+        if not _f.empty and "shipmentordercode" in _f.columns:
+            _spd_ltl_codes.update(_f["shipmentordercode"].str.upper().dropna())
+    logger.info(f"Fetching ON HOLD codes from Logiwa ({len(_spd_ltl_codes)} SPD/LTL codes, max 25s)...")
+    on_hold_codes = fetch_on_hold_codes(spd_ltl_codes=_spd_ltl_codes if _spd_ltl_codes else None)
     if not _all_queue.empty and on_hold_codes:
         on_hold_df = _all_queue[
             _all_queue["shipmentordercode"].str.upper().isin({c.upper() for c in on_hold_codes})
