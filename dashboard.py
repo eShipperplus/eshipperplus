@@ -90,90 +90,49 @@ DB = "IUTDGKJ_DEA90311_ESHIPPER_DIRECT_SHARE.ESHIPPER_SCHEMA"
 LOGIWA_EMAIL    = os.environ.get("LOGIWA_EMAIL",    "logiwa_api_user1@eshipperplus.com")
 LOGIWA_PASSWORD = os.environ.get("LOGIWA_PASSWORD", "eShipper+123")
 LOGIWA_BASE     = "https://myapi.logiwa.com"
-ON_HOLD_TAG     = "ON HOLD"
-LOGIWA_SCAN_PAGES = 100   # scan 5000 most-recent orders — all active on-hold orders appear here
+ON_HOLD_TAG          = "ON HOLD"
+LOGIWA_SCAN_PAGES    = 100   # max pages to scan (100 × 50 = 5 000 most-recent orders)
+LOGIWA_MAX_SCAN_SECS = 25    # hard wall-clock budget — never block dashboard longer than this
 
 
 def fetch_on_hold_codes(queue_codes: set = None) -> set:
-    """Authenticate with Logiwa Open API and return set of order codes tagged ON HOLD.
+    """Scan Logiwa API (newest-first pages) for orders tagged ON HOLD.
 
-    Strategy:
-      1. If queue_codes provided → look up each code directly via the Logiwa
-         search endpoint.  This is targeted and works regardless of order age.
-      2. Fallback → page-scan the LOGIWA_SCAN_PAGES most-recent orders (used
-         when queue_codes is not available).
+    Hard wall-clock budget of LOGIWA_MAX_SCAN_SECS so this never hangs the
+    dashboard.  Scans up to LOGIWA_SCAN_PAGES pages × 50 orders each.
+    The queue_codes parameter is accepted but ignored (kept for call-site compat).
     """
-    import ssl, urllib.request as _ur, json as _json
+    import ssl, urllib.request as _ur, json as _json, time as _time
     ctx = ssl.create_default_context()
-
-    def _auth():
-        req = _ur.Request(
+    try:
+        auth_req = _ur.Request(
             f"{LOGIWA_BASE}/v3.1/Authorize/token",
             data=_json.dumps({"Email": LOGIWA_EMAIL, "Password": LOGIWA_PASSWORD}).encode(),
             headers={"Content-Type": "application/json"}
         )
-        with _ur.urlopen(req, timeout=15, context=ctx) as r:
-            return _json.loads(r.read())["token"]
+        with _ur.urlopen(auth_req, timeout=15, context=ctx) as r:
+            token = _json.loads(r.read())["token"]
 
-    def _tags_for_order(order_obj):
-        """Return list of tag name strings from an order dict (handles nesting)."""
-        if isinstance(order_obj, dict) and "data" in order_obj:
-            order_obj = order_obj["data"] or {}
-        return [t.get("name", "") for t in (order_obj or {}).get("tags", [])]
-
-    try:
-        token = _auth()
-        hdrs = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
+        hdrs = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         on_hold = set()
+        deadline = _time.monotonic() + LOGIWA_MAX_SCAN_SECS
 
-        if queue_codes:
-            # ── Targeted lookup: one POST search per queue order code ──────────
-            # Uses POST /v3.1/ShipmentOrder/list/i/0/s/1 with {"Code": code}
-            # body to retrieve that specific order (works regardless of age).
-            found_direct = True
-            for code in queue_codes:
-                try:
-                    body = _json.dumps({"Code": code}).encode()
-                    req = _ur.Request(
-                        f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/0/s/1",
-                        data=body, headers=hdrs
-                    )
-                    with _ur.urlopen(req, timeout=10, context=ctx) as r:
-                        resp = _json.loads(r.read())
-                    orders = resp.get("data", []) if isinstance(resp, dict) else []
-                    for order in orders:
-                        if order.get("code", "").upper() == code.upper():
-                            tags = [t.get("name", "").upper() for t in order.get("tags", [])]
-                            if ON_HOLD_TAG in tags:
-                                on_hold.add(code)
-                except Exception as ex:
-                    logger.debug(f"  Logiwa direct lookup failed for {code}: {ex}")
-                    found_direct = False
-                    break   # if first call fails, fall through to page-scan
-
-            if not found_direct:
-                logger.warning("Logiwa direct lookup failed — falling back to page scan")
-                queue_codes = None   # drop into page-scan below
-
-        if not queue_codes:
-            # ── Fallback: scan newest LOGIWA_SCAN_PAGES pages ─────────────────
-            for page in range(LOGIWA_SCAN_PAGES):
-                req = _ur.Request(
-                    f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/50",
-                    headers=hdrs
-                )
-                with _ur.urlopen(req, timeout=15, context=ctx) as r:
-                    data = _json.loads(r.read()).get("data", [])
-                if not data:
-                    break
-                for order in data:
-                    tags = [t.get("name", "").upper() for t in order.get("tags", [])]
-                    if ON_HOLD_TAG in tags:
-                        on_hold.add(order["code"])
+        for page in range(LOGIWA_SCAN_PAGES):
+            if _time.monotonic() > deadline:
+                logger.warning(f"Logiwa scan: time budget reached at page {page}, stopping")
+                break
+            req = _ur.Request(
+                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/50",
+                headers=hdrs
+            )
+            with _ur.urlopen(req, timeout=10, context=ctx) as r:
+                data = _json.loads(r.read()).get("data", [])
+            if not data:
+                break
+            for order in data:
+                tags = [t.get("name", "").upper() for t in order.get("tags", [])]
+                if ON_HOLD_TAG in tags:
+                    on_hold.add(order["code"])
 
         logger.info(f"Logiwa ON HOLD codes fetched: {len(on_hold)} orders")
         return on_hold
@@ -2186,17 +2145,11 @@ def main():
     baseline_df = query_snowflake(_hourly_baseline_sql())
 
     # ── ON HOLD orders (Logiwa API) ───────────────────────────────────────────
-    # Build combined queue first so we can pass exact codes to Logiwa lookup
     _all_queue_frames = [f for f in [d2c_pick, d2c_pack, spd_pick, spd_pack,
                                      ltl_pick, ltl_pack, ltl_nopack] if not f.empty]
     _all_queue = pd.concat(_all_queue_frames, ignore_index=True) if _all_queue_frames else pd.DataFrame()
-    _queue_codes = (
-        set(_all_queue["shipmentordercode"].str.upper().dropna())
-        if not _all_queue.empty and "shipmentordercode" in _all_queue.columns
-        else set()
-    )
-    logger.info(f"Fetching ON HOLD tags from Logiwa for {len(_queue_codes)} queue orders...")
-    on_hold_codes = fetch_on_hold_codes(queue_codes=_queue_codes)
+    logger.info("Fetching ON HOLD order codes from Logiwa (page scan, max 25s)...")
+    on_hold_codes = fetch_on_hold_codes()
     if not _all_queue.empty and on_hold_codes:
         on_hold_df = _all_queue[
             _all_queue["shipmentordercode"].str.upper().isin({c.upper() for c in on_hold_codes})
