@@ -1396,7 +1396,7 @@ function renderManagerQueue() {
   const uid = state.user.uid;
   const unassigned = state.data.jobs.filter(j => j.status === 'created' || (j.status === 'assigned_manager' && j.assignedManagerId === uid));
   const pendingReview = state.data.jobs.filter(j => j.status === 'pending_review');
-  const myTeamAssocs = state.data.users.filter(u => u.role === 'associate' || u.role === 'manager');
+  const myTeamAssocs = (state.data.users||[]).filter(u => u.role === 'associate' || u.role === 'manager');
 
   return `
     <div class="section-header"><h1>Job Queue</h1></div>

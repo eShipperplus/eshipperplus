@@ -570,8 +570,9 @@ app.get('/api/init', requireAuth, async (req, res) => {
       payload.templates = templatesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     }
 
-    // Admin + Office Support: include all users and teams (needed for manager dropdown + user directory)
-    if (user.role === 'admin' || user.role === 'office_support') {
+    // Admin + Office Support: full user list + teams for user directory
+    // Manager: user list needed to populate associate assignment dropdowns
+    if (user.role === 'admin' || user.role === 'office_support' || user.role === 'manager') {
       const [usersSnap, teamsSnap] = await Promise.all([
         db.collection('wh_users').get(),
         db.collection('wh_teams').get(),
