@@ -93,22 +93,33 @@ LOGIWA_BASE     = "https://myapi.logiwa.com"
 ON_HOLD_TAG          = "ON HOLD"
 LOGIWA_SCAN_PAGES    = 100   # max pages to scan (100 × 50 = 5 000 most-recent orders)
 LOGIWA_MAX_SCAN_SECS = 25    # hard wall-clock budget — never block dashboard longer than this
+# Manual override: comma-separated order codes to always treat as ON HOLD.
+# Set ON_HOLD_CODES env var in Railway when Logiwa API can't find older orders.
+# e.g.  ON_HOLD_CODES=SPS-1041001,SPS-1041275,SPS-1039844
+ON_HOLD_MANUAL_CODES = {
+    c.strip().upper()
+    for c in os.environ.get("ON_HOLD_CODES", "").split(",")
+    if c.strip()
+}
 
 
 def fetch_on_hold_codes(spd_ltl_codes: set = None) -> set:
-    """Find orders tagged ON HOLD in Logiwa.
+    """Return set of order codes that should be treated as ON HOLD.
 
-    Strategy (in order):
-    1. TARGETED: if spd_ltl_codes provided (SPD + LTL queue codes only —
-       typically < 300), look up each code directly via POST body filter.
-       These queues are small enough to finish well within the time budget,
-       and targeted lookup works regardless of how old the order is.
-    2. PAGE SCAN fallback: scan the LOGIWA_SCAN_PAGES newest pages when
-       no codes are provided or targeted lookup fails immediately.
-
-    Both paths respect LOGIWA_MAX_SCAN_SECS hard wall-clock budget.
+    Sources (merged):
+    1. ON_HOLD_CODES env var — manual override, comma-separated codes set in
+       Railway Variables.  Reliable for older orders the API can't reach.
+    2. Logiwa page scan — newest LOGIWA_SCAN_PAGES × 50 orders checked for the
+       ON HOLD tag.  Catches recently-tagged orders automatically.
+       Hard wall-clock budget of LOGIWA_MAX_SCAN_SECS.
     """
     import ssl, urllib.request as _ur, json as _json, time as _time
+
+    # Always start with manual overrides — these are instant and reliable
+    on_hold = set(ON_HOLD_MANUAL_CODES)
+    if on_hold:
+        logger.info(f"  ON HOLD manual override: {len(on_hold)} codes from env var")
+
     ctx = ssl.create_default_context()
     try:
         auth_req = _ur.Request(
@@ -119,64 +130,32 @@ def fetch_on_hold_codes(spd_ltl_codes: set = None) -> set:
         with _ur.urlopen(auth_req, timeout=15, context=ctx) as r:
             token = _json.loads(r.read())["token"]
 
-        hdrs = {"Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json"}
-        on_hold  = set()
+        hdrs     = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         deadline = _time.monotonic() + LOGIWA_MAX_SCAN_SECS
 
-        if spd_ltl_codes:
-            # ── Targeted per-code lookup (SPD+LTL only — small set) ───────────
-            # Try URL query-param filter: GET /list/i/0/s/5?Code=<code>
-            # This is more likely to be respected than a POST body filter.
-            import urllib.parse as _up
-            checked = 0
-            for code in spd_ltl_codes:
-                if _time.monotonic() > deadline:
-                    logger.warning(f"Logiwa targeted scan: time budget reached after {checked} codes")
-                    break
-                try:
-                    url = (f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/0/s/5"
-                           f"?Code={_up.quote(code, safe='')}")
-                    req = _ur.Request(url, headers={"Authorization": f"Bearer {token}",
-                                                    "Accept": "application/json"})
-                    with _ur.urlopen(req, timeout=5, context=ctx) as r:
-                        rows = _json.loads(r.read()).get("data", [])
-                    for order in rows:
-                        if order.get("code", "").upper() == code.upper():
-                            tags = [t.get("name", "").upper() for t in order.get("tags", [])]
-                            if ON_HOLD_TAG in tags:
-                                on_hold.add(code)
-                                logger.info(f"  ✓ ON HOLD found: {code}")
-                    checked += 1
-                except Exception as ex:
-                    logger.debug(f"Logiwa lookup failed for {code}: {ex}")
-            logger.info(f"Logiwa targeted scan: checked {checked}/{len(spd_ltl_codes)} SPD/LTL codes, found {len(on_hold)} ON HOLD")
-        else:
-            # ── Page-scan fallback ────────────────────────────────────────────
-            for page in range(LOGIWA_SCAN_PAGES):
-                if _time.monotonic() > deadline:
-                    logger.warning(f"Logiwa page scan: time budget reached at page {page}")
-                    break
-                req = _ur.Request(
-                    f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/50",
-                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
-                )
-                with _ur.urlopen(req, timeout=10, context=ctx) as r:
-                    data = _json.loads(r.read()).get("data", [])
-                if not data:
-                    break
-                for order in data:
-                    tags = [t.get("name", "").upper() for t in order.get("tags", [])]
-                    if ON_HOLD_TAG in tags:
-                        on_hold.add(order["code"])
-            logger.info(f"Logiwa page scan: found {len(on_hold)} ON HOLD orders")
+        for page in range(LOGIWA_SCAN_PAGES):
+            if _time.monotonic() > deadline:
+                logger.warning(f"Logiwa page scan: time budget reached at page {page}")
+                break
+            req = _ur.Request(
+                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/50",
+                headers=hdrs
+            )
+            with _ur.urlopen(req, timeout=10, context=ctx) as r:
+                data = _json.loads(r.read()).get("data", [])
+            if not data:
+                break
+            for order in data:
+                tags = [t.get("name", "").upper() for t in order.get("tags", [])]
+                if ON_HOLD_TAG in tags:
+                    on_hold.add(order["code"])
 
+        logger.info(f"Logiwa ON HOLD total: {len(on_hold)} orders (api+manual)")
         return on_hold
 
     except Exception as e:
-        logger.warning(f"Logiwa API fetch failed: {e} — ON HOLD filter skipped")
-        return set()
+        logger.warning(f"Logiwa API fetch failed: {e} — using manual codes only ({len(on_hold)})")
+        return on_hold
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2228,14 +2207,8 @@ def main():
     _all_queue_frames = [f for f in [d2c_pick, d2c_pack, spd_pick, spd_pack,
                                      ltl_pick, ltl_pack, ltl_nopack] if not f.empty]
     _all_queue = pd.concat(_all_queue_frames, ignore_index=True) if _all_queue_frames else pd.DataFrame()
-    # Use targeted lookup for SPD+LTL only (small queue, works on old orders).
-    # D2C is excluded — too large. ON HOLD orders observed so far are SPD/LTL.
-    _spd_ltl_codes = set()
-    for _f in [spd_pick, spd_pack, ltl_pick, ltl_pack, ltl_nopack]:
-        if not _f.empty and "shipmentordercode" in _f.columns:
-            _spd_ltl_codes.update(_f["shipmentordercode"].str.upper().dropna())
-    logger.info(f"Fetching ON HOLD codes from Logiwa ({len(_spd_ltl_codes)} SPD/LTL codes, max 25s)...")
-    on_hold_codes = fetch_on_hold_codes(spd_ltl_codes=_spd_ltl_codes if _spd_ltl_codes else None)
+    logger.info("Fetching ON HOLD codes (manual env + Logiwa page scan)...")
+    on_hold_codes = fetch_on_hold_codes()
     if not _all_queue.empty and on_hold_codes:
         on_hold_df = _all_queue[
             _all_queue["shipmentordercode"].str.upper().isin({c.upper() for c in on_hold_codes})
