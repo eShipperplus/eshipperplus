@@ -1261,7 +1261,18 @@ function renderPagination(total, page, perPage, onPrev, onNext) {
 function showQuickAssignModal(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
   if (!job) return;
-  const associates = (state.data.users||[]).filter(u => u.role==='associate'||u.role==='manager'||u.role==='admin');
+  // Managers see only their team members; admins see everyone
+  const _allUsers = (state.data.users||[]);
+  let associates;
+  if (state.user.role === 'admin') {
+    associates = _allUsers.filter(u => u.role==='associate'||u.role==='manager'||u.role==='admin');
+  } else {
+    const _myTeam = (state.data.teams||[]).find(t => t.managerId === state.user.uid);
+    const _memberIds = _myTeam ? (_myTeam.memberIds || []) : [];
+    associates = _memberIds.length
+      ? _allUsers.filter(u => _memberIds.includes(u.uid || u.id))
+      : _allUsers.filter(u => u.role === 'associate');
+  }
   showModal(`
     <div class="modal-header">
       <h2>Assign Associates — ${job.customerId}</h2>
@@ -1345,9 +1356,13 @@ function renderMyJobs() {
           ${(()=>{
             const allLocs = j.locations || [];
             const uid = state.user.uid;
-            // Associates only see tasks assigned to them (or tasks with no per-location assignment)
-            const myLocs = (state.user.role === 'associate')
-              ? allLocs.filter(l => !l.assignedAssocId || l.assignedAssocId === uid)
+            // Associates only see their tasks.
+            // If the manager used per-location assignment (any task has assignedAssocId set),
+            // show ONLY tasks explicitly assigned to this associate.
+            // If no per-location assignments exist (job-level only), show all tasks.
+            const hasPerLocAssignment = allLocs.some(l => l.assignedAssocId);
+            const myLocs = (state.user.role === 'associate' && hasPerLocAssignment)
+              ? allLocs.filter(l => l.assignedAssocId === uid)
               : allLocs;
             const doneCnt = myLocs.filter(l=>l.status==='done').length;
             return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
@@ -3453,7 +3468,19 @@ async function submitReviewComplete(jobId) {
 function showAssignLocationsModal(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
   if (!job) return;
-  const associates = (state.data.users||[]).filter(u => ['associate','manager','admin'].includes(u.role));
+  // Managers only see their own team members; admins see everyone
+  const allUsers = (state.data.users||[]);
+  let associates;
+  if (state.user.role === 'admin') {
+    associates = allUsers.filter(u => ['associate','manager','admin'].includes(u.role));
+  } else {
+    // Find the team this manager leads
+    const myTeam = (state.data.teams||[]).find(t => t.managerId === state.user.uid);
+    const memberIds = myTeam ? (myTeam.memberIds || []) : [];
+    associates = memberIds.length
+      ? allUsers.filter(u => memberIds.includes(u.uid || u.id))
+      : allUsers.filter(u => u.role === 'associate'); // fallback: all associates if no team set up
+  }
   const locs = job.locations || [];
   if (!locs.length) { toast('This job has no locations to assign'); return; }
 
