@@ -881,7 +881,7 @@ function renderDashboard() {
   });
 
   const sum = (arr, key) => arr.reduce((a, b) => a + (b[key] || 0), 0);
-  const open = jobs.filter(j => j.status !== 'completed');
+  const open = jobs.filter(j => j.status !== 'completed' && j.status !== 'cancelled');
   const overdueJobs  = open.filter(isOverdue);
   const dueTodayJobs = open.filter(isDueToday);
 
@@ -1311,7 +1311,7 @@ function renderMyJobs() {
   const jobs = state.data.jobs.filter(j =>
     j.createdBy === uid || (j.assignedAssocId||[]).includes(uid) || j.assignedManagerId === uid
   );
-  const active = jobs.filter(j => j.status !== 'completed');
+  const active = jobs.filter(j => j.status !== 'completed' && j.status !== 'cancelled');
   const done = jobs.filter(j => j.status === 'completed').slice(0, 20);
 
   return `
