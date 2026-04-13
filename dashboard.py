@@ -629,31 +629,59 @@ ORDER BY
 def _daily_history_sql():
     """
     60-day rolling window of orders picked and packed per day, broken down by order type.
-    Includes shipped orders (completed throughput). Excludes cancelled + test clients.
+    Also returns DailyAllocated (orders allocated that day) as a volume proxy for fair baselines.
+    Last 15 days are shown in the chart; days 16-60 are used to compute the efficiency baseline.
     """
     return f"""
+WITH daily_tasks AS (
+    SELECT
+        DATE(CONVERT_TIMEZONE('UTC','America/Toronto', wt.ActualFinishDateTime)) AS WorkDate,
+        COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=1 AND sot.Name ILIKE '%D2C%' THEN wt.ShipmentOrderId END) AS D2C_Picked,
+        COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=6 AND sot.Name ILIKE '%D2C%' THEN wt.ShipmentOrderId END) AS D2C_Packed,
+        COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=1 AND sot.Name ILIKE '%SPD%' THEN wt.ShipmentOrderId END) AS SPD_Picked,
+        COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=6 AND sot.Name ILIKE '%SPD%' THEN wt.ShipmentOrderId END) AS SPD_Packed,
+        COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=1 AND sot.Name ILIKE '%LTL%' THEN wt.ShipmentOrderId END) AS LTL_Picked,
+        COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=6 AND sot.Name ILIKE '%LTL%' THEN wt.ShipmentOrderId END) AS LTL_Packed
+    FROM {DB}.WAREHOUSETASK wt
+    INNER JOIN {DB}.SHIPMENTORDER so  ON wt.ShipmentOrderId     = so.Id  AND so.Deleted = 0
+    INNER JOIN {DB}.SHIPMENTORDERTYPE sot ON so.ShipmentOrderTypeId = sot.Id
+    INNER JOIN {DB}.CLIENT c              ON so.ClientId             = c.Id  AND c.Deleted = 0
+    WHERE wt.WarehouseTaskStatusId = 3
+      AND wt.WarehouseTaskTypeId  IN (1, 6)
+      AND wt.Deleted = 0
+      AND (sot.Name ILIKE '%D2C%' OR sot.Name ILIKE '%SPD%' OR sot.Name ILIKE '%LTL%')
+      AND COALESCE(c.FullName, c.DisplayName) NOT ILIKE '%test%'
+      AND so.ShipmentOrderStatusId != 30
+      AND wt.WarehouseId = 26771
+      AND DATE(CONVERT_TIMEZONE('UTC','America/Toronto', wt.ActualFinishDateTime))
+            >= DATEADD(day, -60, CURRENT_DATE())
+    GROUP BY WorkDate
+),
+daily_alloc AS (
+    -- Orders allocated each day = proxy for that day's incoming workload volume
+    SELECT
+        DATE(CONVERT_TIMEZONE('UTC','America/Toronto', so.AllocationDateTime)) AS AllocDate,
+        COUNT(DISTINCT so.Id) AS DailyAllocated
+    FROM {DB}.SHIPMENTORDER so
+    INNER JOIN {DB}.SHIPMENTORDERTYPE sot ON so.ShipmentOrderTypeId = sot.Id
+    INNER JOIN {DB}.CLIENT c              ON so.ClientId             = c.Id AND c.Deleted = 0
+    WHERE so.Deleted = 0
+      AND so.ShipmentOrderStatusId != 30
+      AND (sot.Name ILIKE '%D2C%' OR sot.Name ILIKE '%SPD%' OR sot.Name ILIKE '%LTL%')
+      AND COALESCE(c.FullName, c.DisplayName) NOT ILIKE '%test%'
+      AND so.WarehouseId = 26771
+      AND DATE(CONVERT_TIMEZONE('UTC','America/Toronto', so.AllocationDateTime))
+            >= DATEADD(day, -60, CURRENT_DATE())
+    GROUP BY AllocDate
+)
 SELECT
-    DATE(CONVERT_TIMEZONE('UTC','America/Toronto', wt.ActualFinishDateTime)) AS WorkDate,
-    COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=1 AND sot.Name ILIKE '%D2C%' THEN wt.ShipmentOrderId END) AS D2C_Picked,
-    COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=6 AND sot.Name ILIKE '%D2C%' THEN wt.ShipmentOrderId END) AS D2C_Packed,
-    COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=1 AND sot.Name ILIKE '%SPD%' THEN wt.ShipmentOrderId END) AS SPD_Picked,
-    COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=6 AND sot.Name ILIKE '%SPD%' THEN wt.ShipmentOrderId END) AS SPD_Packed,
-    COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=1 AND sot.Name ILIKE '%LTL%' THEN wt.ShipmentOrderId END) AS LTL_Picked,
-    COUNT(DISTINCT CASE WHEN wt.WarehouseTaskTypeId=6 AND sot.Name ILIKE '%LTL%' THEN wt.ShipmentOrderId END) AS LTL_Packed
-FROM {DB}.WAREHOUSETASK wt
-INNER JOIN {DB}.SHIPMENTORDER so  ON wt.ShipmentOrderId     = so.Id  AND so.Deleted = 0
-INNER JOIN {DB}.SHIPMENTORDERTYPE sot ON so.ShipmentOrderTypeId = sot.Id
-INNER JOIN {DB}.CLIENT c              ON so.ClientId             = c.Id  AND c.Deleted = 0
-WHERE wt.WarehouseTaskStatusId = 3
-  AND wt.WarehouseTaskTypeId  IN (1, 6)
-  AND wt.Deleted = 0
-  AND (sot.Name ILIKE '%D2C%' OR sot.Name ILIKE '%SPD%' OR sot.Name ILIKE '%LTL%')
-  AND COALESCE(c.FullName, c.DisplayName) NOT ILIKE '%test%'
-  AND so.ShipmentOrderStatusId != 30
-  AND wt.WarehouseId = 26771
-  AND DATE(CONVERT_TIMEZONE('UTC','America/Toronto', wt.ActualFinishDateTime))
-        >= DATEADD(day, -15, CURRENT_DATE())
-GROUP BY WorkDate
+    t.WorkDate,
+    t.D2C_Picked, t.D2C_Packed,
+    t.SPD_Picked, t.SPD_Packed,
+    t.LTL_Picked, t.LTL_Packed,
+    COALESCE(a.DailyAllocated, 0) AS DailyAllocated
+FROM daily_tasks t
+LEFT JOIN daily_alloc a ON t.WorkDate = a.AllocDate
 ORDER BY WorkDate
 """
 
@@ -1245,21 +1273,66 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 }})();
 </script>"""
 
+    def _vol_adj_targets(df_daily):
+        """
+        Compute volume-adjusted pick/pack targets from historical data.
+        Uses days OLDER than the last 15 (the baseline window: days 16-60).
+        Baseline = p75 efficiency rate (picks / daily_allocated) on weekdays
+                   with sufficient volume.  Returns (eff_pick, eff_pack) floats,
+                   or (None, None) if not enough data.
+        Target for a display day = efficiency × that day's DailyAllocated.
+        This is "fair" because high-volume days get a higher absolute target.
+        """
+        for col in ["totalpicked", "totalpacked", "dailyallocated"]:
+            if col not in df_daily.columns:
+                df_daily[col] = 0
+            df_daily[col] = pd.to_numeric(df_daily[col], errors="coerce").fillna(0)
+        all_sorted = df_daily.sort_values("workdate")
+        baseline = all_sorted.iloc[:-15] if len(all_sorted) > 15 else pd.DataFrame()
+        if baseline.empty:
+            return None, None
+        bl = baseline.copy()
+        bl["_dow"] = pd.to_datetime(bl["workdate"], errors="coerce").dt.dayofweek  # 0=Mon 6=Sun
+        bl = bl[(bl["_dow"] < 5) & (bl["dailyallocated"] > 30)]   # weekdays, min 30 allocations
+        if len(bl) < 5:
+            return None, None
+        eff_pick = (bl["totalpicked"] / bl["dailyallocated"]).quantile(0.75)
+        eff_pack = (bl["totalpacked"] / bl["dailyallocated"]).quantile(0.75)
+        return float(eff_pick), float(eff_pack)
+
     def trend_chart(df):
         if df.empty: return '<p class="empty">No history data.</p>'
         d = df.copy(); d["workdate"] = d["workdate"].astype(str)
-        daily = d[~d["workdate"].str.contains(" ")].sort_values("workdate")
+        daily = d[~d["workdate"].str.contains(" ")].sort_values("workdate").copy()
         if daily.empty: return '<p class="empty">No daily history yet.</p>'
-        lbl = json.dumps(daily["workdate"].tolist())
-        pk  = json.dumps(pd.to_numeric(daily.get("TotalPicked",0),errors="coerce").fillna(0).astype(int).tolist())
-        pa  = json.dumps(pd.to_numeric(daily.get("TotalPacked",0),errors="coerce").fillna(0).astype(int).tolist())
-        d2c = json.dumps(pd.to_numeric(daily.get("d2c_picked",0),errors="coerce").fillna(0).astype(int).tolist())
-        spd = json.dumps(pd.to_numeric(daily.get("spd_picked",0),errors="coerce").fillna(0).astype(int).tolist())
-        ltl = json.dumps(pd.to_numeric(daily.get("ltl_picked",0),errors="coerce").fillna(0).astype(int).tolist())
+
+        # Compute fair baselines from older history, display last 15 days
+        eff_pk, eff_pa = _vol_adj_targets(daily)
+        display = daily.tail(15).copy()
+
+        lbl = json.dumps(display["workdate"].tolist())
+        pk  = json.dumps(pd.to_numeric(display.get("TotalPicked",  display.get("totalpicked",  0)), errors="coerce").fillna(0).astype(int).tolist())
+        pa  = json.dumps(pd.to_numeric(display.get("TotalPacked",  display.get("totalpacked",  0)), errors="coerce").fillna(0).astype(int).tolist())
+        d2c = json.dumps(pd.to_numeric(display.get("d2c_picked", 0), errors="coerce").fillna(0).astype(int).tolist())
+        spd = json.dumps(pd.to_numeric(display.get("spd_picked", 0), errors="coerce").fillna(0).astype(int).tolist())
+        ltl = json.dumps(pd.to_numeric(display.get("ltl_picked", 0), errors="coerce").fillna(0).astype(int).tolist())
+
+        def _tgt_series(eff):
+            if eff is None: return "[]"
+            allocs = pd.to_numeric(display.get("dailyallocated", 0), errors="coerce").fillna(0)
+            vals = [round(eff * a) if a > 30 else None for a in allocs]
+            return json.dumps(vals)
+
+        tpk = _tgt_series(eff_pk)
+        tpa = _tgt_series(eff_pa)
+        has_tgt = eff_pk is not None
+        eff_pct = f"{eff_pk:.0%}" if eff_pk else ""
+        tgt_note = f' <span style="font-size:0.75rem;color:#64748b">(target = {eff_pct} of daily volume, p75 of last 45d weekdays)</span>' if has_tgt else ""
+
         return f"""
 <div class="chart-row">
   <div class="chart-box wide">
-    <div class="chart-title">Daily Picked vs Packed \u2014 15 Day Trend</div>
+    <div class="chart-title">Daily Picked vs Packed \u2014 15 Day Trend{tgt_note}</div>
     <canvas id="tMain" height="240"></canvas>
   </div>
   <div class="chart-box">
@@ -1269,12 +1342,19 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 </div>
 <script>(function(){{
   var L={lbl};
+  var tpk={tpk}, tpa={tpa};
+  var mainDs=[
+    {{label:"Picked",data:{pk},borderColor:"#22c55e",backgroundColor:"rgba(34,197,94,0.1)",tension:0.3,fill:true,pointRadius:3}},
+    {{label:"Packed",data:{pa},borderColor:"#3b82f6",backgroundColor:"rgba(59,130,246,0.1)",tension:0.3,fill:true,pointRadius:3}}
+  ];
+  if(tpk.length){{
+    mainDs.push({{label:"Target Pick",data:tpk,borderColor:"rgba(34,197,94,0.5)",borderDash:[6,4],borderWidth:1.5,pointRadius:0,fill:false,tension:0}});
+    mainDs.push({{label:"Target Pack",data:tpa,borderColor:"rgba(59,130,246,0.5)",borderDash:[6,4],borderWidth:1.5,pointRadius:0,fill:false,tension:0}});
+  }}
   new Chart(document.getElementById("tMain").getContext("2d"),{{type:"line",
-    data:{{labels:L,datasets:[
-      {{label:"Picked",data:{pk},borderColor:"#22c55e",backgroundColor:"rgba(34,197,94,0.1)",tension:0.3,fill:true,pointRadius:3}},
-      {{label:"Packed",data:{pa},borderColor:"#3b82f6",backgroundColor:"rgba(59,130,246,0.1)",tension:0.3,fill:true,pointRadius:3}}
-    ]}},options:{{responsive:true,interaction:{{mode:"index",intersect:false}},
-      plugins:{{legend:{{labels:{{color:"#94a3b8"}}}}}},
+    data:{{labels:L,datasets:mainDs}},
+    options:{{responsive:true,interaction:{{mode:"index",intersect:false}},
+      plugins:{{legend:{{labels:{{color:"#94a3b8",boxWidth:12}}}}}},
       scales:{{x:{{ticks:{{color:"#64748b",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(0,0,0,0.06)"}}}},
                y:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}
     }}}});
@@ -1567,7 +1647,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         ("ltlpa",  "LTL Packing",           mk_pack(ltl_pack,"LTL Packing",td_pk_ltl,td_pa_ltl), len(ltl_pack)),
         ("ltlnp",  "LTL No-Pack \u26a0",    nopack_tab,                                       len(ltl_nopack)),
         ("onhold", "On Hold \U0001f6d1",    _on_hold_tab(on_hold_df),                         len(on_hold_df) if not on_hold_df.empty else 0),
-        ("tr",     "Daily Trend",           hourly_section(hourly_df, baseline_df) + trend_chart(hist_df),  None),
+        ("tr",     "Daily Trend",           trend_chart(hist_df),  None),
     ]
 
     def _nav_item(i, t):
@@ -2057,6 +2137,8 @@ def main():
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
         df["TotalPicked"] = df["d2c_picked"] + df["spd_picked"] + df["ltl_picked"]
         df["TotalPacked"] = df["d2c_packed"] + df["spd_packed"] + df["ltl_packed"]
+        if "dailyallocated" in df.columns:
+            df["dailyallocated"] = pd.to_numeric(df["dailyallocated"], errors="coerce").fillna(0).astype(int)
         return df
 
     if not hist_df.empty:
