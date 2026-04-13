@@ -84,6 +84,55 @@ EXCLUDED_SO_STATUSES = (20, 30)   # 20=Shipped, 30=Cancelled
 
 DB = "IUTDGKJ_DEA90311_ESHIPPER_DIRECT_SHARE.ESHIPPER_SCHEMA"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# LOGIWA API CONFIG
+# ──────────────────────────────────────────────────────────────────────────────
+LOGIWA_EMAIL    = os.environ.get("LOGIWA_EMAIL",    "logiwa_api_user1@eshipperplus.com")
+LOGIWA_PASSWORD = os.environ.get("LOGIWA_PASSWORD", "eShipper+123")
+LOGIWA_BASE     = "https://myapi.logiwa.com"
+ON_HOLD_TAG     = "ON HOLD"
+LOGIWA_SCAN_PAGES = 100   # scan 5000 most-recent orders — all active on-hold orders appear here
+
+
+def fetch_on_hold_codes() -> set:
+    """Authenticate with Logiwa Open API and return set of order codes tagged ON HOLD."""
+    import ssl, urllib.request as _ur, json as _json
+    ctx = ssl.create_default_context()
+    try:
+        # Auth
+        auth_req = _ur.Request(
+            f"{LOGIWA_BASE}/v3.1/Authorize/token",
+            data=_json.dumps({"Email": LOGIWA_EMAIL, "Password": LOGIWA_PASSWORD}).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        with _ur.urlopen(auth_req, timeout=15, context=ctx) as r:
+            token = _json.loads(r.read())["token"]
+
+        hdrs = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        on_hold = set()
+
+        for page in range(LOGIWA_SCAN_PAGES):
+            req = _ur.Request(
+                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/50",
+                headers=hdrs
+            )
+            with _ur.urlopen(req, timeout=15, context=ctx) as r:
+                data = _json.loads(r.read()).get("data", [])
+            if not data:
+                break
+            for order in data:
+                for tag in order.get("tags", []):
+                    if tag.get("name", "").upper() == ON_HOLD_TAG:
+                        on_hold.add(order["code"])
+                        break
+
+        logger.info(f"Logiwa ON HOLD codes fetched: {len(on_hold)} orders")
+        return on_hold
+
+    except Exception as e:
+        logger.warning(f"Logiwa API fetch failed: {e} — ON HOLD filter skipped")
+        return set()
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SQL QUERIES
@@ -900,7 +949,7 @@ def build_queue(df, urgency_fn, priority_df, now, tz, is_monday=False, suppress_
 def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                    ltl_pack, ltl_pick, ltl_nopack, today_df, hist_df,
                    open_shortage_df, hourly_df, baseline_df,
-                   now, filepath):
+                   on_hold_df, now, filepath):
     """Generate a BI-style HTML dashboard: KPIs, pivot summaries, charts, detail tables."""
     import html as _html, json
 
@@ -1223,6 +1272,13 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
     all_pick = pd.concat(frames_pick,ignore_index=True) if frames_pick else pd.DataFrame()
     all_pack = pd.concat(frames_pack,ignore_index=True) if frames_pack else pd.DataFrame()
 
+    # ── Exclude ON HOLD orders from SLA queues ────────────────────────────────
+    _oh_codes = set(on_hold_df["shipmentordercode"].str.upper()) if not on_hold_df.empty else set()
+    if _oh_codes and "shipmentordercode" in all_pick.columns:
+        all_pick = all_pick[~all_pick["shipmentordercode"].str.upper().isin(_oh_codes)]
+    if _oh_codes and "shipmentordercode" in all_pack.columns:
+        all_pack = all_pack[~all_pack["shipmentordercode"].str.upper().isin(_oh_codes)]
+
     tot_pick=ocnt(all_pick); tot_pack=ocnt(all_pack)
     pp=ocnt(all_pick,"UrgencyLevel","Past SLA");    bp=ocnt(all_pick,"UrgencyLevel","Breaching SLA")
     ppa=ocnt(all_pack,"UrgencyLevel","Past SLA");   bpa=ocnt(all_pack,"UrgencyLevel","Breaching SLA")
@@ -1407,6 +1463,51 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 <div class="section-title" style="margin-top:1.2rem">Detail</div>
 {tbl(_dedup_orders(ltl_nopack),NP)}"""
 
+    def _on_hold_tab(df):
+        if df.empty:
+            return '<p class="empty" style="padding:2rem">No ON HOLD orders at this time.</p>'
+        n = len(df)
+        clients = df.groupby("clientname")["shipmentordercode"].nunique().reset_index()
+        clients.columns = ["Client", "Orders"]
+        clients = clients.sort_values("Orders", ascending=False)
+        client_rows = "".join(
+            f'<tr><td>{esc(r["Client"])}</td><td style="text-align:right;font-weight:600">{r["Orders"]}</td></tr>'
+            for _, r in clients.iterrows()
+        )
+        cols = ["shipmentordercode","clientname","ordertype","allocationdate","UrgencyLevel","AgeLabel"]
+        vis  = [c for c in cols if c in df.columns]
+        hdrs = {"shipmentordercode":"Order Code","clientname":"Client","ordertype":"Order Type",
+                "allocationdate":"Allocated","UrgencyLevel":"Was Urgency","AgeLabel":"Age"}
+        detail_rows = "".join(
+            "<tr>" + "".join(
+                f'<td><span class="badge" style="background:#f59e0b;color:#fff">{esc(str(r.get(c,"") or ""))}</span></td>'
+                if c == "UrgencyLevel" else
+                f'<td>{esc(str(r.get(c,"") or ""))}</td>'
+                for c in vis
+            ) + "</tr>"
+            for _, r in _dedup_orders(df).iterrows()
+        )
+        return f"""
+<div class="kpi-row">
+  {kpi(n, "Orders On Hold", "#f59e0b")}
+</div>
+<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.82rem;color:#92400e">
+  &#9888; These orders have been tagged <strong>ON HOLD</strong> in Logiwa by the CSM team.
+  They are excluded from SLA calculations until the hold is removed.
+</div>
+<div class="section-title">By Client</div>
+<table class="qtable" style="max-width:400px;margin-bottom:1.5rem">
+  <thead><tr><th>Client</th><th style="text-align:right">Orders</th></tr></thead>
+  <tbody>{client_rows}</tbody>
+</table>
+<div class="section-title">All On Hold Orders</div>
+<div style="overflow-x:auto">
+<table class="qtable" style="width:100%">
+  <thead><tr>{"".join(f"<th>{hdrs.get(c,c)}</th>" for c in vis)}</tr></thead>
+  <tbody>{detail_rows}</tbody>
+</table>
+</div>"""
+
     TABS = [
         ("ov",     "Overview",              overview,                                         None),
         ("d2cpk",  "D2C Picking",           d2c_pk_tab,                                       len(d2c_pick)),
@@ -1416,6 +1517,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         ("ltlpk",  "LTL Picking",           mk_pick(ltl_pick,"LTL Picking",td_pk_ltl,td_pa_ltl), len(ltl_pick)),
         ("ltlpa",  "LTL Packing",           mk_pack(ltl_pack,"LTL Packing",td_pk_ltl,td_pa_ltl), len(ltl_pack)),
         ("ltlnp",  "LTL No-Pack \u26a0",    nopack_tab,                                       len(ltl_nopack)),
+        ("onhold", "On Hold \U0001f6d1",    _on_hold_tab(on_hold_df),                         len(on_hold_df) if not on_hold_df.empty else 0),
         ("tr",     "Daily Trend",           hourly_section(hourly_df, baseline_df) + trend_chart(hist_df),  None),
     ]
 
@@ -1952,6 +2054,20 @@ def main():
     logger.info("Hourly baseline (45-day peak)...")
     baseline_df = query_snowflake(_hourly_baseline_sql())
 
+    # ── ON HOLD orders (Logiwa API) ───────────────────────────────────────────
+    logger.info("Fetching ON HOLD order codes from Logiwa...")
+    on_hold_codes = fetch_on_hold_codes()
+    _all_queue_frames = [f for f in [d2c_pick, d2c_pack, spd_pick, spd_pack,
+                                     ltl_pick, ltl_pack, ltl_nopack] if not f.empty]
+    _all_queue = pd.concat(_all_queue_frames, ignore_index=True) if _all_queue_frames else pd.DataFrame()
+    if not _all_queue.empty and on_hold_codes:
+        on_hold_df = _all_queue[
+            _all_queue["shipmentordercode"].str.upper().isin({c.upper() for c in on_hold_codes})
+        ].copy()
+    else:
+        on_hold_df = pd.DataFrame()
+    logger.info(f"  → ON HOLD orders in queue: {len(on_hold_df)}")
+
     # ── HTML Dashboard ────────────────────────────────────────────────────────
     logger.info("Writing HTML dashboard...")
     html_path = r"C:\Users\user\Desktop\Claude\wms_dashboard\wms_dashboard.html"
@@ -1961,7 +2077,7 @@ def main():
         ltl_pack, ltl_pick,
         ltl_nopack, today_df, final_hist,
         open_shortage_df, hourly_df, baseline_df,
-        now, html_path
+        on_hold_df, now, html_path
     )
     logger.info(f"  → HTML dashboard written → {html_path}")
 
