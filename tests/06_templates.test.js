@@ -68,10 +68,12 @@ describe('TC-TPL-01: Create Template', () => {
     expect(res.status).toBe(400);
   });
 
-  test('Missing customerId → 400', async () => {
+  test('customerId is optional — template without customerId applies to all customers', async () => {
+    // Server only requires name + jobTypeId for templates; customerId is optional (empty = all customers)
     const { managerToken } = setupBaseState();
     const res = await post('/api/templates', { name: 'T', jobTypeId: 'bts' }, managerToken);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeDefined();
   });
 
   test('Template with dueDaysOffset=0 stored correctly', async () => {

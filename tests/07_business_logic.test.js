@@ -77,9 +77,10 @@ describe('TC-BL-01: Financial Calculation Edge Cases', () => {
   });
 
   test('Non-billable job still calculates financials', async () => {
-    const { managerToken } = setupBaseState();
-    const jobId = seedJob({ status: 'pending_review', customerId: 'Acme Corp', jobTypeId: 'bts', assignedAssocId: [] });
-    const res = await put(`/api/jobs/${jobId}/complete`, { fields: { cartons: 50 }, billable: false }, managerToken);
+    // Only admin can override billable on complete; seed the job as non-billable
+    const { adminToken } = setupBaseState();
+    const jobId = seedJob({ status: 'pending_review', customerId: 'Acme Corp', jobTypeId: 'bts', assignedAssocId: [], billable: false });
+    const res = await put(`/api/jobs/${jobId}/complete`, { fields: { cartons: 50 }, billable: false }, adminToken);
     expect(res.status).toBe(200);
     expect(res.body.billable).toBe(false);
     expect(res.body.revenue).toBeGreaterThan(0);

@@ -148,6 +148,27 @@ class CollectionReference extends Query {
 
 const db = {
   collection: (name) => new CollectionReference(name),
+  async runTransaction(fn) {
+    const tx = {
+      get: async (ref) => {
+        const data = _store[ref._coll]?.[ref.id];
+        return new DocumentSnapshot(ref.id, data !== undefined ? { ...data } : undefined, ref._coll);
+      },
+      set: (ref, data) => {
+        if (!_store[ref._coll]) _store[ref._coll] = {};
+        _store[ref._coll][ref.id] = { ...data };
+      },
+      update: (ref, data) => {
+        if (!_store[ref._coll]) _store[ref._coll] = {};
+        const existing = _store[ref._coll][ref.id] || {};
+        _store[ref._coll][ref.id] = applyFieldValue(existing, data);
+      },
+      delete: (ref) => {
+        if (_store[ref._coll]) delete _store[ref._coll][ref.id];
+      },
+    };
+    return fn(tx);
+  },
   batch() {
     const ops = [];
     return {
@@ -217,11 +238,12 @@ const auth = {
 // ── Storage Mock ──────────────────────────────────────────────────────────────
 
 const bucket = {
-  file: (path) => ({
+  file: (filePath) => ({
     save: jest.fn().mockResolvedValue(undefined),
     makePublic: jest.fn().mockResolvedValue(undefined),
-    publicUrl: () => `https://storage.example.com/${path}`,
-    metadata: { mediaLink: `https://storage.example.com/${path}` },
+    publicUrl: () => `https://storage.example.com/${filePath}`,
+    metadata: { mediaLink: `https://storage.example.com/${filePath}` },
+    getSignedUrl: jest.fn().mockResolvedValue([`https://storage.example.com/signed/${filePath}?token=mock`]),
   }),
 };
 

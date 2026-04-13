@@ -824,7 +824,7 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
 app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
   try {
     const { user, uid } = req;
-    const { locations } = req.body;
+    const { locations, referenceDataTypes } = req.body;
     if (!Array.isArray(locations)) return res.status(400).json({ error: 'locations array required' });
     const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
     if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
@@ -861,7 +861,7 @@ app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
       assignedAssocName: l.assignedAssocId ? (assocNames[l.assignedAssocId] || l.assignedAssocName || '') : '',
     }));
     const now = Timestamp.now();
-    await db.collection('wh_jobs').doc(req.params.id).update({
+    const updatePayload = {
       locations: mergedWithNames,
       assignedAssocId: assocIds,
       assignedAssocNames: assocIds.map(id => assocNames[id] || ''),
@@ -869,7 +869,12 @@ app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
       updatedBy: uid,
       updatedByName: user.displayName,
       updatedAt: now,
-    });
+    };
+    // Save manager-defined column types if provided
+    if (referenceDataTypes && typeof referenceDataTypes === 'object') {
+      updatePayload.referenceDataTypes = referenceDataTypes;
+    }
+    await db.collection('wh_jobs').doc(req.params.id).update(updatePayload);
     res.json({ locations: mergedWithNames });
   } catch (err) {
     console.error('PUT locations error:', err);
@@ -922,7 +927,7 @@ app.put('/api/jobs/:id/locations/:locId/reopen', requireAuth, async (req, res) =
 app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => {
   try {
     const { user, uid } = req;
-    const { assocNotes, capturedData } = req.body;
+    const { assocNotes, capturedData, updatedRefData } = req.body;
     const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
     if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
     const job = jobSnap.data();
@@ -937,9 +942,13 @@ app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => 
       ['manager', 'admin'].includes(req.user.role);
     if (!canMark) return res.status(403).json({ error: 'Not assigned to this task' });
     const now = Timestamp.now();
-    const updatedLocations = job.locations.map((l, i) =>
-      i === locIndex ? { ...l, status: 'done', assocNotes: assocNotes || '', capturedData: capturedData || {}, completedAt: now } : l
-    );
+    const updatedLocations = job.locations.map((l, i) => {
+      if (i !== locIndex) return l;
+      const mergedRefData = (updatedRefData && typeof updatedRefData === 'object')
+        ? { ...(l.referenceData || {}), ...updatedRefData }
+        : (l.referenceData || {});
+      return { ...l, status: 'done', assocNotes: assocNotes || '', capturedData: capturedData || {}, referenceData: mergedRefData, completedAt: now };
+    });
     const allDone = updatedLocations.every(l => l.status === 'done');
     const update = {
       locations: updatedLocations,

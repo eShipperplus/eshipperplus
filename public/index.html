@@ -1344,13 +1344,18 @@ function renderMyJobs() {
           ${j.notes?`<div style="font-size:12px;margin-top:8px;color:var(--text-light)">${j.notes}</div>`:''}
           ${(()=>{
             const allLocs = j.locations || [];
-            const doneCnt = allLocs.filter(l=>l.status==='done').length;
+            const uid = state.user.uid;
+            // Associates only see tasks assigned to them (or tasks with no per-location assignment)
+            const myLocs = (state.user.role === 'associate')
+              ? allLocs.filter(l => !l.assignedAssocId || l.assignedAssocId === uid)
+              : allLocs;
+            const doneCnt = myLocs.filter(l=>l.status==='done').length;
             return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <div style="font-size:11px;font-weight:700;color:var(--text-light);letter-spacing:.05em">TASKS ${allLocs.length?`(${doneCnt}/${allLocs.length} done)`:''}</div>
+                <div style="font-size:11px;font-weight:700;color:var(--text-light);letter-spacing:.05em">TASKS ${myLocs.length?`(${doneCnt}/${myLocs.length} done)`:''}</div>
                 ${j.status!=='completed'&&j.status!=='cancelled'?`<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openAddTaskModal('${j.id}')">+ Add Task</button>`:''}
               </div>
-              ${allLocs.length ? allLocs.map(l=>`
+              ${myLocs.length ? myLocs.map(l=>`
                 <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--grey)">
                   <div style="flex:1">
                     <div style="font-size:13px;font-weight:600">${l.name}</div>
@@ -3452,6 +3457,25 @@ function showAssignLocationsModal(jobId) {
   const locs = job.locations || [];
   if (!locs.length) { toast('This job has no locations to assign'); return; }
 
+  // Collect all unique reference data column names across all locations
+  const allRefCols = [...new Set(locs.flatMap(l => Object.keys(l.referenceData || {})))];
+  const savedTypes = job.referenceDataTypes || {};
+  const colTypeHtml = allRefCols.length ? `
+    <div style="background:#f0f4ff;border:1px solid #c3dafe;border-radius:7px;padding:12px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--primary);margin-bottom:8px">REFERENCE COLUMN TYPES</div>
+      <div style="font-size:12px;color:var(--text-light);margin-bottom:10px">Set the input type associates will see when filling in each field.</div>
+      ${allRefCols.map(col => `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:13px;font-weight:600;min-width:140px;flex:1">${col}</span>
+          <select data-col-type="${col}" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:160px">
+            <option value="text"  ${(savedTypes[col]||'text')==='text'  ?'selected':''}>Text (free input)</option>
+            <option value="number"${(savedTypes[col]||'text')==='number'?'selected':''}>Number</option>
+            <option value="date"  ${(savedTypes[col]||'text')==='date'  ?'selected':''}>Date (YYYYMMDD)</option>
+          </select>
+        </div>`).join('')}
+    </div>` : '';
+
+
   const makeOpts = (selUid) => `<option value="">— Unassigned —</option>` +
     associates.map(u => `<option value="${u.uid}"${u.uid === selUid ? ' selected' : ''}>${u.displayName}</option>`).join('');
 
@@ -3460,6 +3484,7 @@ function showAssignLocationsModal(jobId) {
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
+      ${colTypeHtml}
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
         <input id="loc-search" type="text" placeholder="Search locations…" oninput="filterAssignLocs()"
           style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:7px;font-size:13px"/>
@@ -3545,6 +3570,11 @@ function bulkAssignApply() {
 async function submitAssignLocations(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
   if (!job) return;
+  // Collect manager-defined column types
+  const referenceDataTypes = {};
+  document.querySelectorAll('[data-col-type]').forEach(sel => {
+    referenceDataTypes[sel.dataset.colType] = sel.value;
+  });
   const selects = [...document.querySelectorAll('.loc-assign-select')];
   const locations = (job.locations||[]).map(l => {
     const sel = selects.find(s => s.dataset.locId === l.id);
@@ -3552,7 +3582,7 @@ async function submitAssignLocations(jobId) {
     return { ...l, assignedAssocId };
   });
   try {
-    await apiFetch(`/api/jobs/${jobId}/locations`, { method: 'PUT', body: JSON.stringify({ locations }) });
+    await apiFetch(`/api/jobs/${jobId}/locations`, { method: 'PUT', body: JSON.stringify({ locations, referenceDataTypes }) });
     document.querySelector('.modal-overlay')?.remove();
     await loadData();
     renderView();
@@ -3629,12 +3659,25 @@ function openAddTaskModal(jobId) {
       <div class="form-group">
         <label>Reference Info <span style="font-weight:400;color:var(--text-light)">(optional — e.g. SKU, PO#)</span></label>
         <div id="new-task-refs">
-          <div class="field-row" style="margin-bottom:6px">
-            <input type="text" placeholder="Label (e.g. Expiry Date)" oninput="onTaskRefLabelChange(this)"
-              style="width:38%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
-            <input type="text" placeholder="Value" data-scan-target="1" data-ref-value="1"
-              style="width:53%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
-          </div>
+          ${Object.keys(job.referenceDataTypes || {}).length
+            ? Object.entries(job.referenceDataTypes).map(([col, colType]) => {
+                const isDate = colType === 'date';
+                const isNum = colType === 'number';
+                return `<div class="field-row" style="margin-bottom:6px">
+                  <input type="text" value="${col}" readonly
+                    style="width:38%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#f7f7f7"/>
+                  <input type="${isDate ? 'date' : isNum ? 'number' : 'text'}"
+                    placeholder="${isDate ? 'YYYYMMDD' : 'Value'}"
+                    ${isDate ? '' : 'data-scan-target="1"'} data-ref-value="1"
+                    style="width:53%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
+                </div>`;
+              }).join('')
+            : `<div class="field-row" style="margin-bottom:6px">
+                <input type="text" placeholder="Label (e.g. Expiry Date)" oninput="onTaskRefLabelChange(this)"
+                  style="width:38%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+                <input type="text" placeholder="Value" data-scan-target="1" data-ref-value="1"
+                  style="width:53%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
+              </div>`}
         </div>
         <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px" onclick="addNewTaskRefRow()">+ Add field</button>
       </div>
@@ -3747,12 +3790,34 @@ function openMarkLocationDoneModal(jobId, locId) {
   if (!loc) return;
   delete _pendingPhotos[`${jobId}_${locId}`];
   const captureFields = (job.csvCaptureFields && job.csvCaptureFields.length) ? job.csvCaptureFields : getJobFields(job.jobTypeId);
+  const refTypes = job.referenceDataTypes || {};
   const refEntries = Object.entries(loc.referenceData || {}).filter(([,v]) => v);
   const refHtml = refEntries.length ? `
     <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;padding:10px;margin-bottom:14px">
-      ${refEntries.map(([k,v])=>`<div style="display:flex;gap:12px;font-size:13px;padding:2px 0">
-        <span style="color:#276749;min-width:110px;font-weight:600">${k}</span><span>${v}</span>
-      </div>`).join('')}
+      ${refEntries.map(([k,v])=>{
+        const colType = refTypes[k] || 'text';
+        if (colType === 'date') {
+          // Show date as editable date picker, pre-filled in YYYYMMDD format
+          const iso = v.length === 8 ? `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}` : v;
+          return `<div style="display:flex;gap:12px;font-size:13px;padding:4px 0;align-items:center">
+            <span style="color:#276749;min-width:110px;font-weight:600">${k}</span>
+            <input type="date" data-ref-key="${k}" data-ref-type="date" value="${iso}"
+              style="padding:4px 7px;border:1px solid #9ae6b4;border-radius:5px;font-size:13px;background:#fff"/>
+          </div>`;
+        } else if (colType === 'number') {
+          return `<div style="display:flex;gap:12px;font-size:13px;padding:4px 0;align-items:center">
+            <span style="color:#276749;min-width:110px;font-weight:600">${k}</span>
+            <input type="number" data-ref-key="${k}" data-ref-type="number" value="${v}"
+              style="padding:4px 7px;border:1px solid #9ae6b4;border-radius:5px;font-size:13px;background:#fff;width:120px"/>
+          </div>`;
+        } else {
+          return `<div style="display:flex;gap:12px;font-size:13px;padding:4px 0;align-items:center">
+            <span style="color:#276749;min-width:110px;font-weight:600">${k}</span>
+            <input type="text" data-ref-key="${k}" data-ref-type="text" value="${v}"
+              style="padding:4px 7px;border:1px solid #9ae6b4;border-radius:5px;font-size:13px;background:#fff"/>
+          </div>`;
+        }
+      }).join('')}
     </div>` : (loc.instructions ? `<div style="padding:10px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:13px;margin-bottom:14px;color:#276749">${loc.instructions}</div>` : '');
   const fieldsHtml = captureFields.length ? `
     <div style="font-size:13px;font-weight:600;margin:12px 0 8px">Fill in</div>
@@ -3791,12 +3856,20 @@ async function submitMarkLocationDone(jobId, locId) {
   const captureFields = (job?.csvCaptureFields && job.csvCaptureFields.length) ? job.csvCaptureFields : getJobFields(job?.jobTypeId);
   const captureForm = document.getElementById('loc-capture-form');
   const capturedData = captureForm ? collectFields(captureForm, captureFields) : {};
+  // Collect any edited reference data values
+  const updatedRefData = {};
+  document.querySelectorAll('[data-ref-key]').forEach(inp => {
+    const key = inp.dataset.refKey;
+    let val = inp.value.trim();
+    if (inp.dataset.refType === 'date' && val) val = val.replace(/-/g, '');
+    updatedRefData[key] = val;
+  });
   const assocNotes = document.getElementById('loc-done-notes')?.value || '';
   const btn = document.getElementById('loc-done-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
   try {
     const result = await apiFetch(`/api/jobs/${jobId}/locations/${locId}/done`, {
-      method: 'PUT', body: JSON.stringify({ assocNotes, capturedData }),
+      method: 'PUT', body: JSON.stringify({ assocNotes, capturedData, updatedRefData }),
     });
     delete _pendingPhotos[`${jobId}_${locId}`];
     document.querySelector('.modal-overlay')?.remove();
