@@ -127,17 +127,19 @@ def fetch_on_hold_codes(spd_ltl_codes: set = None) -> set:
 
         if spd_ltl_codes:
             # ── Targeted per-code lookup (SPD+LTL only — small set) ───────────
+            # Try URL query-param filter: GET /list/i/0/s/5?Code=<code>
+            # This is more likely to be respected than a POST body filter.
+            import urllib.parse as _up
             checked = 0
             for code in spd_ltl_codes:
                 if _time.monotonic() > deadline:
                     logger.warning(f"Logiwa targeted scan: time budget reached after {checked} codes")
                     break
                 try:
-                    body = _json.dumps({"Code": code}).encode()
-                    req  = _ur.Request(
-                        f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/0/s/5",
-                        data=body, headers=hdrs
-                    )
+                    url = (f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/0/s/5"
+                           f"?Code={_up.quote(code, safe='')}")
+                    req = _ur.Request(url, headers={"Authorization": f"Bearer {token}",
+                                                    "Accept": "application/json"})
                     with _ur.urlopen(req, timeout=5, context=ctx) as r:
                         rows = _json.loads(r.read()).get("data", [])
                     for order in rows:
@@ -145,6 +147,7 @@ def fetch_on_hold_codes(spd_ltl_codes: set = None) -> set:
                             tags = [t.get("name", "").upper() for t in order.get("tags", [])]
                             if ON_HOLD_TAG in tags:
                                 on_hold.add(code)
+                                logger.info(f"  ✓ ON HOLD found: {code}")
                     checked += 1
                 except Exception as ex:
                     logger.debug(f"Logiwa lookup failed for {code}: {ex}")
@@ -1282,6 +1285,23 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
           mode = "flat" → val = absolute target (same line every day)
           mode = None   → not enough data, no target lines
         """
+        # Normalise column names — _add_totals creates TotalPicked/TotalPacked (mixed case)
+        # while Snowflake returns dailyallocated (lowercase). Handle both.
+        df_daily = df_daily.copy()
+        df_daily.columns = [c.lower() for c in df_daily.columns]
+        # Build totalpicked/totalpacked from components if not present
+        if "totalpicked" not in df_daily.columns:
+            df_daily["totalpicked"] = (
+                pd.to_numeric(df_daily.get("d2c_picked", 0), errors="coerce").fillna(0)
+                + pd.to_numeric(df_daily.get("spd_picked", 0), errors="coerce").fillna(0)
+                + pd.to_numeric(df_daily.get("ltl_picked", 0), errors="coerce").fillna(0)
+            )
+        if "totalpacked" not in df_daily.columns:
+            df_daily["totalpacked"] = (
+                pd.to_numeric(df_daily.get("d2c_packed", 0), errors="coerce").fillna(0)
+                + pd.to_numeric(df_daily.get("spd_packed", 0), errors="coerce").fillna(0)
+                + pd.to_numeric(df_daily.get("ltl_packed", 0), errors="coerce").fillna(0)
+            )
         for col in ["totalpicked", "totalpacked", "dailyallocated"]:
             if col not in df_daily.columns:
                 df_daily[col] = 0
