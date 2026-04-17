@@ -61,7 +61,7 @@ function clearTokenCache(email) {
 // ── Clients list ─────────────────────────────────────────────────────────────
 async function listClients(email, password) {
   const token = await getToken(email, password);
-  const r = await _request('GET', '/v3.1/Client/list/i/0/s/300', null, token);
+  const r = await _request('GET', '/v3.1/Client/list/i/0/s/200', null, token);
   if (!r.body?.data) throw new Error(`Clients fetch failed: ${JSON.stringify(r.body)}`);
   return r.body.data.map(c => ({
     identifier: c.identifier,
