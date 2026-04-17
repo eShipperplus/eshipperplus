@@ -70,8 +70,8 @@ async function listClients(email, password) {
 }
 
 // ── Inventory fetch (paginated) ───────────────────────────────────────────
-const PAGE_SIZE = 200; // max allowed by API
-const MAX_PAGES = 200; // up to 40k items
+const INV_PAGE_SIZE = 500; // inventory endpoint supports up to 500
+const MAX_PAGES = 100;     // up to 50k items
 
 function _mapItem(item) {
   return {
@@ -92,52 +92,39 @@ function _mapItem(item) {
   };
 }
 
-async function fetchInventoryPage(token, index) {
-  const r = await _request('GET', `/v3.1/Inventory/list/i/${index}/s/${PAGE_SIZE}`, null, token);
+async function fetchInventoryPage(token, index, filterClientId) {
+  const r = await _request('GET', `/v3.1/Inventory/list/i/${index}/s/${INV_PAGE_SIZE}`, null, token);
   if (!r.body?.data) return { data: [], done: true };
-  return {
-    data: r.body.data.map(_mapItem),
-    done: r.body.data.length < PAGE_SIZE,
-  };
+  const raw = r.body.data;
+  const data = (filterClientId
+    ? raw.filter(x => String(x.clientIdentifier) === String(filterClientId))
+    : raw).map(_mapItem);
+  return { data, done: raw.length < INV_PAGE_SIZE };
 }
 
-// Fetch inventory filtered by clientIdentifier via POST search endpoint
-async function fetchInventoryByClient(token, clientIdentifier, onProgress) {
-  let all = [];
-  for (let i = 0; i < MAX_PAGES; i++) {
-    const r = await _request('POST', `/v3.1/Inventory/list/i/${i}/s/${PAGE_SIZE}`,
-      { clientIdentifier }, token);
-    if (!r.body?.data || r.body.data.length === 0) break;
-    all = all.concat(r.body.data.map(_mapItem));
-    if (onProgress) onProgress(all.length);
-    if (r.body.data.length < PAGE_SIZE) break;
-    await new Promise(r => setTimeout(r, 1100));
-  }
-  return all;
-}
-
+// Parallel fetch with CONCURRENCY pages at a time, then 1s pause between batches
 async function fetchAllInventory(email, password, onProgress, filterClientId) {
   const token = await getToken(email, password);
-
-  // Try fast client-filtered fetch first
-  if (filterClientId) {
-    try {
-      const items = await fetchInventoryByClient(token, filterClientId, onProgress);
-      if (items.length > 0) return items;
-    } catch (e) {
-      console.warn('Client-filtered fetch failed, falling back to full fetch:', e.message);
-    }
-  }
-
-  // Full paginated fetch (with optional client-side filter)
+  const CONCURRENCY = filterClientId ? 5 : 3; // faster for single-client test syncs
   let all = [];
-  for (let i = 0; i < MAX_PAGES; i++) {
-    const { data, done } = await fetchInventoryPage(token, i);
-    const filtered = filterClientId ? data.filter(x => String(x.clientId) === String(filterClientId)) : data;
-    all = all.concat(filtered);
+  let pageIndex = 0;
+  let done = false;
+
+  while (!done && pageIndex < MAX_PAGES * CONCURRENCY) {
+    // Fire CONCURRENCY pages in parallel
+    const indices = [];
+    for (let c = 0; c < CONCURRENCY; c++) indices.push(pageIndex + c);
+    pageIndex += CONCURRENCY;
+
+    const results = await Promise.all(indices.map(i => fetchInventoryPage(token, i, filterClientId)));
+
+    for (const res of results) {
+      all = all.concat(res.data);
+      if (res.done) { done = true; break; }
+    }
+
     if (onProgress) onProgress(all.length);
-    if (done) break;
-    await new Promise(r => setTimeout(r, 1100));
+    if (!done) await new Promise(r => setTimeout(r, 1000)); // 1s between batches
   }
   return all;
 }
