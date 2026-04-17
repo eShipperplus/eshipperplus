@@ -193,7 +193,7 @@ tr:hover td { background: #f0f4ff; }
 <!-- Sign-in Screen -->
 <div id="signin-screen" style="display:none">
   <div class="signin-card">
-    <div class="signin-logo"><img src="/logo.png" alt="eShipper+" style="height:48px;object-fit:contain"/></div>
+    <div class="signin-logo"><img src="/logo.webp" alt="eShipper+" style="height:48px;object-fit:contain"/></div>
     <div class="signin-sub">Warehouse Billing System</div>
 
     <!-- Email/Password form -->
@@ -241,7 +241,7 @@ tr:hover td { background: #f0f4ff; }
   </div>
   <div id="offline-banner">⚠ You are offline — jobs will sync when reconnected</div>
   <div id="topbar">
-    <div class="logo"><img src="/logo.png" alt="eShipper+" style="height:32px;object-fit:contain;vertical-align:middle"/></div>
+    <div class="logo"><img src="/logo.webp" alt="eShipper+" style="height:32px;object-fit:contain;vertical-align:middle"/></div>
     <button id="refresh-btn" onclick="manualRefresh()" title="Refresh" style="background:none;border:none;color:rgba(255,255,255,0.8);font-size:20px;cursor:pointer;padding:4px 8px;line-height:1">↻</button>
     <button id="data-fresh-badge" onclick="applyDataRefresh()" style="display:none;background:var(--teal);color:#fff;border:none;border-radius:20px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;animation:fadeInUp 0.3s">🔄 New data — click to update</button>
     <div class="user-avatar" id="topbar-user"></div>
@@ -2852,21 +2852,7 @@ async function loadLogiwaStatus() {
     if (syncSec && s.ok) { syncSec.style.display = ''; if (syncDiv) syncDiv.style.display = ''; }
 
     // Populate client dropdown for per-client sync
-    if (s.ok) {
-      try {
-        const cr = await apiFetch('/api/logiwa/clients');
-        const sel = document.getElementById('logiwa-sync-client');
-        if (sel && cr.clients) {
-          const existing = sel.innerHTML;
-          cr.clients.forEach(c => {
-            const opt = document.createElement('option');
-            opt.value = c.identifier;
-            opt.textContent = c.name;
-            sel.appendChild(opt);
-          });
-        }
-      } catch(e) { /* non-fatal */ }
-    }
+    if (s.ok) loadLogiwaSyncClients();
 
     // Show last sync status
     if (s.ok && s.lastSync) {
@@ -2967,6 +2953,27 @@ async function startLogiwaSync() {
       } catch {}
     }, 5000);
   } catch (err) { toast('Error: ' + err.message, 3000); if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Inventory Now'; } }
+}
+
+async function loadLogiwaSyncClients() {
+  const sel = document.getElementById('logiwa-sync-client');
+  if (!sel) return;
+  sel.disabled = true;
+  try {
+    const cr = await apiFetch('/api/logiwa/clients');
+    if (cr.clients && cr.clients.length) {
+      cr.clients.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = String(c.identifier);
+        opt.textContent = c.name;
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) {
+    console.warn('Could not load Logiwa clients for sync dropdown:', e.message);
+  } finally {
+    sel.disabled = false;
+  }
 }
 
 // ── Logiwa Movement Modal ────────────────────────────────────────────────────
@@ -5143,7 +5150,7 @@ Object.assign(window, {
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
   showQuickAssignModal, submitQuickAssign, submitQuickAssignManager,
-  renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync,
+  renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients,
   openLogiwaMovementModal, submitLogiwaMovement,
   openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
   toggleAllCustomers, getCustomerPickerValue,
