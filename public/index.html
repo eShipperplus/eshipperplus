@@ -2851,8 +2851,8 @@ async function loadLogiwaStatus() {
     if (mapSec && s.ok) { mapSec.style.display = ''; renderLogiwaMappings(s.clientMappings || {}); }
     if (syncSec && s.ok) { syncSec.style.display = ''; if (syncDiv) syncDiv.style.display = ''; }
 
-    // Populate client dropdown for per-client sync
-    if (s.ok) loadLogiwaSyncClients();
+    // Populate client dropdown for per-client sync (also populates mapping dropdowns)
+    if (s.ok) loadLogiwaClients(true);
 
     // Show last sync status
     if (s.ok && s.lastSync) {
@@ -2879,7 +2879,7 @@ function renderLogiwaMappings(mappings) {
     </div>`).join('');
 }
 
-async function loadLogiwaClients() {
+async function loadLogiwaClients(silent = false) {
   try {
     const r = await apiFetch('/api/logiwa/clients');
     _logiwaClients = r.clients || [];
@@ -2889,10 +2889,9 @@ async function loadLogiwaClients() {
       if (sel) mappings[c] = sel.value;
     });
     renderLogiwaMappings(mappings);
-    // Also refresh sync dropdown
     loadLogiwaSyncClients();
-    toast(`Loaded ${_logiwaClients.length} Logiwa clients`);
-  } catch (err) { toast('Error: ' + err.message, 3000); }
+    if (!silent) toast(`Loaded ${_logiwaClients.length} Logiwa clients`);
+  } catch (err) { if (!silent) toast('Error: ' + err.message, 3000); }
 }
 
 async function saveLogiwaConfig() {
