@@ -2884,12 +2884,13 @@ async function loadLogiwaClients() {
     const r = await apiFetch('/api/logiwa/clients');
     _logiwaClients = r.clients || [];
     const mappings = {};
-    // Re-read current mappings from the existing dropdowns
     (state.data.customers || []).forEach(c => {
       const sel = document.getElementById(`lmap-${c.replace(/[^a-z0-9]/gi,'_')}`);
       if (sel) mappings[c] = sel.value;
     });
     renderLogiwaMappings(mappings);
+    // Also refresh sync dropdown
+    loadLogiwaSyncClients();
     toast(`Loaded ${_logiwaClients.length} Logiwa clients`);
   } catch (err) { toast('Error: ' + err.message, 3000); }
 }
@@ -2958,22 +2959,27 @@ async function startLogiwaSync() {
 async function loadLogiwaSyncClients() {
   const sel = document.getElementById('logiwa-sync-client');
   if (!sel) return;
-  sel.disabled = true;
-  try {
-    const cr = await apiFetch('/api/logiwa/clients');
-    if (cr.clients && cr.clients.length) {
-      cr.clients.forEach(c => {
-        const opt = document.createElement('option');
-        opt.value = String(c.identifier);
-        opt.textContent = c.name;
-        sel.appendChild(opt);
-      });
+
+  // Fetch if not already loaded
+  if (!_logiwaClients.length) {
+    try {
+      const r = await apiFetch('/api/logiwa/clients');
+      _logiwaClients = r.clients || [];
+    } catch(e) {
+      console.warn('Could not load Logiwa clients:', e.message);
+      return;
     }
-  } catch(e) {
-    console.warn('Could not load Logiwa clients for sync dropdown:', e.message);
-  } finally {
-    sel.disabled = false;
   }
+
+  // Clear all but the first "All clients" option
+  while (sel.options.length > 1) sel.remove(1);
+
+  _logiwaClients.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = String(c.identifier);
+    opt.textContent = c.name;
+    sel.appendChild(opt);
+  });
 }
 
 // ── Logiwa Movement Modal ────────────────────────────────────────────────────
