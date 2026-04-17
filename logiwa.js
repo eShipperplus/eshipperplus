@@ -70,42 +70,73 @@ async function listClients(email, password) {
 }
 
 // ── Inventory fetch (paginated) ───────────────────────────────────────────
-const PAGE_SIZE = 500;
-const MAX_PAGES = 100; // up to 50k items
+const PAGE_SIZE = 200; // max allowed by API
+const MAX_PAGES = 200; // up to 40k items
+
+function _mapItem(item) {
+  return {
+    inventoryId: item.identifier,
+    sku: item.productSku,
+    productName: item.productName,
+    clientId: item.clientIdentifier,
+    clientName: item.clientDisplayName,
+    location: item.warehouseLocationCode,
+    locationId: item.warehouseLocationIdentifier,
+    zone: item.warehouseLocationZoneName,
+    totalQty: item.totalQuantity,
+    availQty: item.availableQuantity,
+    lotBatch: item.lotBatchNumber,
+    expiry: item.expiryDate,
+    upc: item.productUpc,
+    warehouseCode: item.warehouseCode,
+  };
+}
 
 async function fetchInventoryPage(token, index) {
   const r = await _request('GET', `/v3.1/Inventory/list/i/${index}/s/${PAGE_SIZE}`, null, token);
   if (!r.body?.data) return { data: [], done: true };
   return {
-    data: r.body.data.map(item => ({
-      inventoryId: item.identifier,
-      sku: item.productSku,
-      productName: item.productName,
-      clientId: item.clientIdentifier,
-      clientName: item.clientDisplayName,
-      location: item.warehouseLocationCode,
-      locationId: item.warehouseLocationIdentifier,
-      zone: item.warehouseLocationZoneName,
-      totalQty: item.totalQuantity,
-      availQty: item.availableQuantity,
-      lotBatch: item.lotBatchNumber,
-      expiry: item.expiryDate,
-      upc: item.productUpc,
-      warehouseCode: item.warehouseCode,
-    })),
+    data: r.body.data.map(_mapItem),
     done: r.body.data.length < PAGE_SIZE,
   };
 }
 
-async function fetchAllInventory(email, password, onProgress) {
+// Fetch inventory filtered by clientIdentifier via POST search endpoint
+async function fetchInventoryByClient(token, clientIdentifier, onProgress) {
+  let all = [];
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const r = await _request('POST', `/v3.1/Inventory/list/i/${i}/s/${PAGE_SIZE}`,
+      { clientIdentifier }, token);
+    if (!r.body?.data || r.body.data.length === 0) break;
+    all = all.concat(r.body.data.map(_mapItem));
+    if (onProgress) onProgress(all.length);
+    if (r.body.data.length < PAGE_SIZE) break;
+    await new Promise(r => setTimeout(r, 1100));
+  }
+  return all;
+}
+
+async function fetchAllInventory(email, password, onProgress, filterClientId) {
   const token = await getToken(email, password);
+
+  // Try fast client-filtered fetch first
+  if (filterClientId) {
+    try {
+      const items = await fetchInventoryByClient(token, filterClientId, onProgress);
+      if (items.length > 0) return items;
+    } catch (e) {
+      console.warn('Client-filtered fetch failed, falling back to full fetch:', e.message);
+    }
+  }
+
+  // Full paginated fetch (with optional client-side filter)
   let all = [];
   for (let i = 0; i < MAX_PAGES; i++) {
     const { data, done } = await fetchInventoryPage(token, i);
-    all = all.concat(data);
+    const filtered = filterClientId ? data.filter(x => String(x.clientId) === String(filterClientId)) : data;
+    all = all.concat(filtered);
     if (onProgress) onProgress(all.length);
     if (done) break;
-    // Small delay to respect rate limit (60 req/min = 1 req/sec)
     await new Promise(r => setTimeout(r, 1100));
   }
   return all;

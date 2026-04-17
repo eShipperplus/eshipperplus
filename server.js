@@ -2085,16 +2085,11 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
     // Run async
     (async () => {
       try {
-        const allItems = await logiwa.fetchAllInventory(creds.email, creds.password, async (count) => {
-          if (count % 1000 === 0) {
+        const items = await logiwa.fetchAllInventory(creds.email, creds.password, async (count) => {
+          if (count % 500 === 0) {
             await db.collection('wh_config').doc('logiwa').update({ syncProgress: count }).catch(() => {});
           }
-        });
-
-        // Filter by client if specified
-        const items = filterClientId
-          ? allItems.filter(item => String(item.clientId) === filterClientId)
-          : allItems;
+        }, filterClientId);
 
         // Write to Firestore in batches of 500
         const BATCH_SIZE = 500;
