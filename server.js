@@ -2065,35 +2065,56 @@ app.get('/api/logiwa/clients', requireAuth, requireRole('admin'), async (req, re
   }
 });
 
-// POST /api/logiwa/sync — fetch ALL inventory from Logiwa and cache in Firestore (admin only)
+// POST /api/logiwa/sync — fetch inventory from Logiwa and cache in Firestore (admin only)
+// Optional body: { clientId: "xxx" } to sync only one client (fast, for testing)
 // This runs as a background job — returns immediately, writes progress to wh_config/logiwa
 app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const creds = await getLogiwaCreds();
     if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
 
+    const filterClientId = req.body && req.body.clientId ? String(req.body.clientId) : null;
+
     // Mark sync as in-progress
-    await db.collection('wh_config').doc('logiwa').update({ syncStatus: 'running', syncStarted: Timestamp.now() });
-    res.json({ ok: true, message: 'Sync started in background' });
+    await db.collection('wh_config').doc('logiwa').update({
+      syncStatus: 'running', syncStarted: Timestamp.now(),
+      syncClientId: filterClientId || null,
+    });
+    res.json({ ok: true, message: filterClientId ? `Sync started for client ${filterClientId}` : 'Full sync started in background' });
 
     // Run async
     (async () => {
       try {
-        const items = await logiwa.fetchAllInventory(creds.email, creds.password, async (count) => {
-          // Update progress every 1000 items
+        const allItems = await logiwa.fetchAllInventory(creds.email, creds.password, async (count) => {
           if (count % 1000 === 0) {
             await db.collection('wh_config').doc('logiwa').update({ syncProgress: count }).catch(() => {});
           }
         });
 
+        // Filter by client if specified
+        const items = filterClientId
+          ? allItems.filter(item => String(item.clientId) === filterClientId)
+          : allItems;
+
         // Write to Firestore in batches of 500
         const BATCH_SIZE = 500;
-        // Clear existing inventory first
-        const existing = await db.collection('wh_logiwa_inventory').limit(500).get();
-        for (let i = 0; i < existing.docs.length; i += 500) {
-          const batch = db.batch();
-          existing.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
-          await batch.commit();
+
+        if (!filterClientId) {
+          // Full sync: clear ALL existing inventory first
+          const existing = await db.collection('wh_logiwa_inventory').limit(500).get();
+          for (let i = 0; i < existing.docs.length; i += 500) {
+            const batch = db.batch();
+            existing.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
+            await batch.commit();
+          }
+        } else {
+          // Client sync: replace only that client's records
+          const existing = await db.collection('wh_logiwa_inventory').where('clientId', '==', filterClientId).limit(500).get();
+          for (let i = 0; i < existing.docs.length; i += 500) {
+            const batch = db.batch();
+            existing.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
+            await batch.commit();
+          }
         }
 
         // Write new inventory
@@ -2112,7 +2133,7 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
           syncCount: items.length,
           syncProgress: items.length,
         });
-        console.log(`Logiwa sync complete: ${items.length} items`);
+        console.log(`Logiwa sync complete: ${items.length} items${filterClientId ? ` (client ${filterClientId})` : ''}`);
       } catch (err) {
         console.error('Logiwa sync error:', err.message);
         await db.collection('wh_config').doc('logiwa').update({ syncStatus: 'error', syncError: err.message }).catch(() => {});
