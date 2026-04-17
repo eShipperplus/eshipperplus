@@ -12,6 +12,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const logiwa = require('./logiwa');
 
 // ─── Firebase Admin Init ──────────────────────────────────────────────────────
 const firebaseConfig = process.env.FIREBASE_SERVICE_ACCOUNT
@@ -19,9 +20,10 @@ const firebaseConfig = process.env.FIREBASE_SERVICE_ACCOUNT
   : undefined;
 
 const STORAGE_BUCKET = 'eshipper-f56c3.firebasestorage.app';
+const PROJECT_ID = 'eshipper-f56c3';
 initializeApp(firebaseConfig
-  ? { credential: cert(firebaseConfig), storageBucket: STORAGE_BUCKET }
-  : { storageBucket: STORAGE_BUCKET });
+  ? { credential: cert(firebaseConfig), storageBucket: STORAGE_BUCKET, projectId: PROJECT_ID }
+  : { storageBucket: STORAGE_BUCKET, projectId: PROJECT_ID });
 
 const db = getFirestore();
 const auth = getAuth();
@@ -928,7 +930,7 @@ app.put('/api/jobs/:id/locations/:locId/reopen', requireAuth, async (req, res) =
 app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => {
   try {
     const { user, uid } = req;
-    const { assocNotes, capturedData, updatedRefData } = req.body;
+    const { assocNotes, capturedData } = req.body;
     const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
     if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
     const job = jobSnap.data();
@@ -945,10 +947,7 @@ app.put('/api/jobs/:id/locations/:locId/done', requireAuth, async (req, res) => 
     const now = Timestamp.now();
     const updatedLocations = job.locations.map((l, i) => {
       if (i !== locIndex) return l;
-      const mergedRefData = (updatedRefData && typeof updatedRefData === 'object')
-        ? { ...(l.referenceData || {}), ...updatedRefData }
-        : (l.referenceData || {});
-      return { ...l, status: 'done', assocNotes: assocNotes || '', capturedData: capturedData || {}, referenceData: mergedRefData, completedAt: now };
+      return { ...l, status: 'done', assocNotes: assocNotes || '', capturedData: capturedData || {}, completedAt: now };
     });
     const allDone = updatedLocations.every(l => l.status === 'done');
     const update = {
@@ -1018,6 +1017,97 @@ app.put('/api/jobs/:id/submit-review', requireAuth, async (req, res) => {
     res.json({ id: req.params.id, ...job, ...update });
   } catch (err) {
     console.error('PUT submit-review error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Associate submits their own portion of work (hours + notes) independently
+app.put('/api/jobs/:id/associate-submit', requireAuth, async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    const job = jobSnap.data();
+
+    const locations = job.locations || [];
+
+    // Determine which locations belong to this associate
+    const hasPerLocAssignment = locations.some(l => l.assignedAssocId);
+    const myLocs = hasPerLocAssignment
+      ? locations.filter(l => l.assignedAssocId === uid)
+      : locations; // job-level: responsible for all
+
+    const jobLevelAssigned = (job.assignedAssocId || []).includes(uid);
+    if (!myLocs.length && !jobLevelAssigned && job.createdBy !== uid) {
+      return res.status(403).json({ error: 'Not assigned to this job' });
+    }
+
+    // Gate: all this associate's tasks must be done
+    const stillPending = myLocs.filter(l => l.status !== 'done');
+    if (stillPending.length > 0) {
+      return res.status(400).json({
+        error: `${stillPending.length} task(s) still pending. Complete all your tasks before submitting.`,
+      });
+    }
+
+    const { hours, notes } = req.body;
+    const now = Timestamp.now();
+
+    // Upsert this associate's submission (replace if they re-submit)
+    const prevSubmissions = (job.associateSubmissions || []).filter(s => s.assocId !== uid);
+    const mySubmission = {
+      assocId: uid,
+      assocName: user.displayName || user.email,
+      hours: Math.max(0, Number(hours) || 0),
+      notes: notes || '',
+      taskCount: myLocs.filter(l => l.status === 'done').length,
+      submittedAt: now,
+    };
+    const updatedSubmissions = [...prevSubmissions, mySubmission];
+
+    // Check whether all assigned associates have now submitted → flip to pending_review
+    const submittedIds = updatedSubmissions.map(s => s.assocId);
+    let newStatus = job.status;
+    const allLocsDone = locations.every(l => l.status === 'done');
+
+    if (allLocsDone) {
+      if (hasPerLocAssignment) {
+        // All unique per-loc assignees must have submitted
+        const uniqueAssocIds = [...new Set(locations.filter(l => l.assignedAssocId).map(l => l.assignedAssocId))];
+        if (uniqueAssocIds.length > 0 && uniqueAssocIds.every(id => submittedIds.includes(id))) {
+          newStatus = 'pending_review';
+        }
+      } else {
+        // Job-level: all job-level assigned associates must have submitted
+        const jobLevelIds = job.assignedAssocId || [];
+        if (jobLevelIds.length > 0 && jobLevelIds.every(id => submittedIds.includes(id))) {
+          newStatus = 'pending_review';
+        }
+      }
+    }
+
+    const update = {
+      associateSubmissions: updatedSubmissions,
+      status: newStatus,
+      updatedBy: uid,
+      updatedByName: user.displayName,
+      updatedAt: now,
+    };
+    if (newStatus === 'pending_review') {
+      update.submittedAt = now;
+      update.submittedByName = updatedSubmissions.map(s => s.assocName).join(', ');
+    }
+
+    await db.collection('wh_jobs').doc(req.params.id).update(update);
+    await writeLog({
+      action: 'job.submitted_review', entity: 'job', entityId: req.params.id,
+      entityLabel: `${job.jobNumber || req.params.id} · ${job.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role,
+      metadata: { hours: mySubmission.hours, tasks: mySubmission.taskCount },
+    });
+    res.json({ id: req.params.id, pendingReview: newStatus === 'pending_review', submission: mySubmission });
+  } catch (err) {
+    console.error('PUT associate-submit error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1922,6 +2012,221 @@ app.get('/api/logs', requireAuth, requireRole('manager', 'admin'), async (req, r
     res.json(logs.slice(0, parseInt(limit) || 200));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ─── Logiwa Integration ───────────────────────────────────────────────────────
+
+// Helper to get stored Logiwa credentials from Firestore
+async function getLogiwaCreds() {
+  const snap = await db.collection('wh_config').doc('logiwa').get();
+  if (!snap.exists) return null;
+  const d = snap.data();
+  if (!d.enabled || !d.email || !d.password) return null;
+  return d;
+}
+
+// GET /api/logiwa/status — check if configured & test connection
+app.get('/api/logiwa/status', requireAuth, requireRole('admin', 'manager', 'office_support'), async (req, res) => {
+  try {
+    const creds = await getLogiwaCreds();
+    if (!creds) return res.json({ configured: false });
+    const token = await logiwa.getToken(creds.email, creds.password);
+    res.json({ configured: true, ok: !!token, email: creds.email, clientMappings: creds.clientMappings || {}, lastSync: creds.lastSync || null });
+  } catch (err) {
+    res.json({ configured: true, ok: false, error: err.message });
+  }
+});
+
+// PUT /api/logiwa/config — save credentials + client mappings (admin only)
+app.put('/api/logiwa/config', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { email, password, enabled, clientMappings } = req.body;
+    const data = { email: email||'', password: password||'', enabled: !!enabled, clientMappings: clientMappings||{}, updatedAt: Timestamp.now() };
+    await db.collection('wh_config').doc('logiwa').set(data, { merge: true });
+    // Test connection
+    if (enabled && email && password) {
+      logiwa.clearTokenCache(email);
+      await logiwa.getToken(email, password);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// GET /api/logiwa/clients — list Logiwa clients for mapping
+app.get('/api/logiwa/clients', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const creds = await getLogiwaCreds();
+    if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
+    const clients = await logiwa.listClients(creds.email, creds.password);
+    res.json({ clients });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/logiwa/sync — fetch ALL inventory from Logiwa and cache in Firestore (admin only)
+// This runs as a background job — returns immediately, writes progress to wh_config/logiwa
+app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const creds = await getLogiwaCreds();
+    if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
+
+    // Mark sync as in-progress
+    await db.collection('wh_config').doc('logiwa').update({ syncStatus: 'running', syncStarted: Timestamp.now() });
+    res.json({ ok: true, message: 'Sync started in background' });
+
+    // Run async
+    (async () => {
+      try {
+        const items = await logiwa.fetchAllInventory(creds.email, creds.password, async (count) => {
+          // Update progress every 1000 items
+          if (count % 1000 === 0) {
+            await db.collection('wh_config').doc('logiwa').update({ syncProgress: count }).catch(() => {});
+          }
+        });
+
+        // Write to Firestore in batches of 500
+        const BATCH_SIZE = 500;
+        // Clear existing inventory first
+        const existing = await db.collection('wh_logiwa_inventory').limit(500).get();
+        for (let i = 0; i < existing.docs.length; i += 500) {
+          const batch = db.batch();
+          existing.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+
+        // Write new inventory
+        for (let i = 0; i < items.length; i += BATCH_SIZE) {
+          const batch = db.batch();
+          items.slice(i, i + BATCH_SIZE).forEach(item => {
+            const ref = db.collection('wh_logiwa_inventory').doc(item.inventoryId);
+            batch.set(ref, { ...item, syncedAt: Timestamp.now() });
+          });
+          await batch.commit();
+        }
+
+        await db.collection('wh_config').doc('logiwa').update({
+          syncStatus: 'done',
+          lastSync: Timestamp.now(),
+          syncCount: items.length,
+          syncProgress: items.length,
+        });
+        console.log(`Logiwa sync complete: ${items.length} items`);
+      } catch (err) {
+        console.error('Logiwa sync error:', err.message);
+        await db.collection('wh_config').doc('logiwa').update({ syncStatus: 'error', syncError: err.message }).catch(() => {});
+      }
+    })();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/logiwa/inventory — search cached inventory by SKU and/or clientId
+app.get('/api/logiwa/inventory', requireAuth, async (req, res) => {
+  try {
+    const { sku, clientId, limit: lim = '50' } = req.query;
+    let query = db.collection('wh_logiwa_inventory');
+    if (sku) query = query.where('sku', '==', sku.trim());
+    if (clientId) query = query.where('clientId', '==', clientId.trim());
+    const snap = await query.limit(parseInt(lim) || 50).get();
+    const items = snap.docs.map(d => d.data());
+    res.json({ items, count: items.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/logiwa/movement — post an inventory movement to Logiwa
+// body: { type: 'add'|'remove'|'adjust', inventoryId, quantity, note, jobId, locId }
+app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
+  try {
+    const { type, inventoryId, quantity, note, jobId, locId } = req.body;
+    if (!type || !inventoryId || !quantity) return res.status(400).json({ error: 'type, inventoryId, quantity required' });
+
+    const creds = await getLogiwaCreds();
+    if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
+
+    let result;
+    const jobNote = `${note||''} [Job:${jobId||''}${locId?`/Loc:${locId}`:''}]`.trim();
+    if (type === 'add')     result = await logiwa.addInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
+    else if (type === 'remove') result = await logiwa.removeInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
+    else if (type === 'adjust') result = await logiwa.adjustInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
+    else return res.status(400).json({ error: 'Invalid type' });
+
+    if (result.status >= 400) {
+      return res.status(result.status).json({ error: result.body?.message || 'Logiwa error', logiwaResponse: result.body });
+    }
+
+    // Record the movement on the job in Firestore
+    if (jobId) {
+      const jobRef = db.collection('wh_jobs').doc(jobId);
+      await jobRef.update({
+        logiwaMovements: FieldValue.arrayUnion({
+          type, inventoryId, quantity, note: jobNote,
+          locId: locId || null,
+          postedAt: new Date().toISOString(),
+          postedBy: req.uid,
+          postedByName: req.user.displayName,
+        }),
+      }).catch(() => {});
+    }
+
+    await writeLog({ action: `logiwa.movement.${type}`, entity: 'job', entityId: jobId || 'N/A',
+      entityLabel: `Logiwa ${type} ${quantity} units (invId: ${inventoryId})`,
+      uid: req.uid, name: req.user.displayName, email: req.user.email, role: req.user.role });
+
+    res.json({ ok: true, logiwaResponse: result.body });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── DEV SETUP (local-only, no auth) ─────────────────────────────────────────
+// TEMP: remove after setup
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/dev-setup', async (req, res) => {
+    try {
+      const { action, data } = req.body;
+      if (action === 'upsert-jobtype') {
+        const snap = await db.collection('wh_config').doc('jobTypes').get();
+        const existing = snap.exists ? (snap.data().list || []) : [];
+        const idx = existing.findIndex(t => t.id === data.id);
+        if (idx >= 0) existing[idx] = data; else existing.push(data);
+        await db.collection('wh_config').doc('jobTypes').set({ list: existing });
+        return res.json({ ok: true, jobTypeId: data.id });
+      }
+      if (action === 'upsert-customer') {
+        const snap = await db.collection('wh_config').doc('customers').get();
+        const existing = snap.exists ? (snap.data().list || []) : [];
+        if (!existing.find(c => c.toLowerCase() === data.name.toLowerCase())) {
+          existing.push(data.name);
+          await db.collection('wh_config').doc('customers').set({ list: existing });
+        }
+        return res.json({ ok: true });
+      }
+      if (action === 'create-job') {
+        const ref = db.collection('wh_jobs').doc();
+        await ref.set({ ...data, id: ref.id, createdAt: require('firebase-admin/firestore').Timestamp.now() });
+        return res.json({ ok: true, jobId: ref.id });
+      }
+      if (action === 'get-init') {
+        const [jtSnap, custSnap] = await Promise.all([
+          db.collection('wh_config').doc('jobTypes').get(),
+          db.collection('wh_config').doc('customers').get(),
+        ]);
+        return res.json({
+          jobTypes: jtSnap.exists ? jtSnap.data().list || [] : [],
+          customers: custSnap.exists ? custSnap.data().list || [] : [],
+        });
+      }
+      res.status(400).json({ error: 'Unknown action' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+}
 
 // ─── SPA Fallback ─────────────────────────────────────────────────────────────
 // ─── Install / QR page (public, no auth) ─────────────────────────────────────

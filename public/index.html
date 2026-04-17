@@ -590,6 +590,7 @@ const NAV_ITEMS = {
     { id: 'customers', label: 'Customers', icon: '🏢' },
     { id: 'rates', label: 'Rate Cards', icon: '💲', group: 'Config' },
     { id: 'jobtypes', label: 'Job Types', icon: '🔧' },
+    { id: 'integrations', label: 'Integrations', icon: '🔌' },
     { id: 'users', label: 'Users & Teams', icon: '👥', group: 'Admin' },
     { id: 'activity-log', label: 'Activity Log', icon: '📜' },
   ],
@@ -604,13 +605,11 @@ const NAV_ITEMS = {
     { id: 'my-jobs', label: 'My Jobs', icon: '📋' },
   ],
   office_support: [
-    { id: 'dashboard',    label: 'Dashboard',    icon: '📊', group: 'Overview' },
     { id: 'jobs',         label: 'All Jobs',      icon: '📦', group: 'Operations' },
     { id: 'create-job',   label: 'Create Job',    icon: '➕' },
     { id: 'templates',    label: 'Templates',     icon: '📋' },
     { id: 'customers',    label: 'Customers',     icon: '🏢', group: 'Config' },
     { id: 'jobtypes',     label: 'Job Types',     icon: '🔧' },
-    { id: 'users',        label: 'Users & Teams', icon: '👥', group: 'Admin' },
     { id: 'activity-log', label: 'Activity Log',  icon: '📜' },
   ],
 };
@@ -657,8 +656,16 @@ function renderNav() {
   });
 }
 
+// Views that contain financial/admin data — office_support is not permitted
+const OFFICE_SUPPORT_BLOCKED = new Set(['dashboard', 'analytics', 'rates', 'users']);
+
 function renderView() {
   const content = document.getElementById('content');
+  const role = state.user?.role;
+  // Redirect office_support away from any blocked view
+  if (role === 'office_support' && OFFICE_SUPPORT_BLOCKED.has(state.view)) {
+    state.view = 'jobs';
+  }
   const view = state.view;
   if (view === 'dashboard') content.innerHTML = renderDashboard();
   else if (view === 'analytics') content.innerHTML = renderAnalytics();
@@ -678,6 +685,7 @@ function renderView() {
     }
   }
   else if (view === 'jobtypes') content.innerHTML = renderJobTypes();
+  else if (view === 'integrations') { content.innerHTML = renderIntegrations(); loadLogiwaStatus(); }
   else if (view === 'users') content.innerHTML = renderUsersTeams();
   else if (view === 'templates') content.innerHTML = renderTemplates();
   else if (view === 'activity-log') { content.innerHTML = renderActivityLogShell(); loadActivityLog(); }
@@ -1239,6 +1247,7 @@ function renderJobRows(jobs) {
         ${canAssign && j.status !== 'completed' && j.status !== 'cancelled' ? `<button class="btn btn-teal btn-sm" onclick="showQuickAssignModal('${j.id}')">Assign</button>` : ''}
         ${canAssign ? `<button class="btn btn-ghost btn-sm" title="Duplicate" onclick="cloneJob('${j.id}',this)">⧉</button>` : ''}
         ${(state.user.role==='admin'||state.user.role==='manager'||state.user.role==='office_support') && j.status !== 'completed' && j.status !== 'cancelled' ? `<button class="btn btn-danger btn-sm" onclick="cancelJob('${j.id}',this)">Cancel</button>` : ''}
+        ${state.user.role==='admin' ? `<button class="btn btn-danger btn-sm" title="Delete job" onclick="deleteJob('${j.id}')">🗑</button>` : ''}
       </div>
     </td>
   </tr>`).join('');
@@ -1261,10 +1270,36 @@ function renderPagination(total, page, perPage, onPrev, onNext) {
 function showQuickAssignModal(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
   if (!job) return;
-  // Managers see only their team members; admins see everyone
+  const role = state.user.role;
   const _allUsers = (state.data.users||[]);
+  const managers = _allUsers.filter(u => u.role==='manager'||u.role==='admin');
+
+  // office_support: only manager assignment
+  if (role === 'office_support') {
+    showModal(`
+      <div class="modal-header">
+        <h2>Assign Manager — ${job.customerId}</h2>
+        <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Select Manager</label>
+          <select id="qa-manager-sel" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:7px;font-size:14px">
+            <option value="">— No manager —</option>
+            ${managers.map(m=>`<option value="${m.uid}" ${job.assignedManagerId===m.uid?'selected':''}>${m.displayName}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="submitQuickAssignManager('${jobId}')">Assign Manager</button>
+        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      </div>`);
+    return;
+  }
+
+  // admin / manager: full associate assignment
   let associates;
-  if (state.user.role === 'admin') {
+  if (role === 'admin') {
     associates = _allUsers.filter(u => u.role==='associate'||u.role==='manager'||u.role==='admin');
   } else {
     const _myTeam = (state.data.teams||[]).find(t => t.managerId === state.user.uid);
@@ -1283,23 +1318,33 @@ function showQuickAssignModal(jobId) {
         Current status: ${statusBadge(job.status)}&nbsp;&nbsp;
         After assigning: <span class="badge badge-assigned_associate">assigned associate</span>
       </div>
-      <div style="border:1px solid var(--border);border-radius:7px;padding:8px;max-height:220px;overflow-y:auto">
-        ${associates.length ? associates.map(u=>`
-          <label style="display:flex;align-items:center;gap:10px;padding:7px 4px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--grey)">
-            <input type="checkbox" class="qa-assoc-cb" value="${u.uid}" ${(job.assignedAssocId||[]).includes(u.uid)?'checked':''}/>
-            <div class="user-avatar" style="width:28px;height:28px;font-size:11px;flex-shrink:0">${(u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')}</div>
-            <div>
-              <div style="font-weight:600">${u.displayName}</div>
-              <div style="font-size:11px;color:var(--text-light)">${u.role.replace('_',' ')}</div>
-            </div>
-          </label>`).join('')
-        : '<p style="color:var(--text-light);font-size:13px;padding:8px">No users found. Invite users first.</p>'}
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#f9f9fb;min-height:44px">
+        ${associates.length ? associates.map(u=>{
+          const initials=(u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
+          const checked=(job.assignedAssocId||[]).includes(u.uid);
+          return `<label style="display:flex;align-items:center;gap:6px;padding:5px 10px 5px 6px;border-radius:20px;border:2px solid ${checked?'var(--primary)':'var(--border)'};background:${checked?'#eef0ff':'#fff'};cursor:pointer;font-size:13px;font-weight:500;transition:all .15s" onclick="setTimeout(()=>{const cb=this.querySelector('input');this.style.borderColor=cb.checked?'var(--primary)':'var(--border)';this.style.background=cb.checked?'#eef0ff':'#fff'},0)">
+            <input type="checkbox" class="qa-assoc-cb" value="${u.uid}" ${checked?'checked':''} style="display:none"/>
+            <div class="user-avatar" style="width:22px;height:22px;font-size:9px;flex-shrink:0">${initials}</div>
+            <span>${u.displayName}</span>
+          </label>`;
+        }).join('')
+        : '<p style="color:var(--text-light);font-size:13px;margin:0">No users found. Invite users first.</p>'}
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="submitQuickAssign('${jobId}')">Assign & Update Status</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
+}
+
+async function submitQuickAssignManager(jobId) {
+  const mgr = document.getElementById('qa-manager-sel')?.value;
+  if (!mgr) { toast('Select a manager first'); return; }
+  try {
+    await apiFetch(`/api/jobs/${jobId}/assign-manager`, { method: 'PUT', body: JSON.stringify({ managerId: mgr }) });
+    await loadData(); document.querySelector('.modal-overlay')?.remove(); renderView();
+    toast('Manager assigned');
+  } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
 async function submitQuickAssign(jobId) {
@@ -1338,16 +1383,30 @@ function renderMyJobs() {
               <div style="font-size:12px;color:var(--text-light)">Due: ${j.dueDate||'—'}${dueBadge(j)} | ${statusBadge(j.status)}</div>
             </div>
             <div style="display:flex;gap:8px">
-              ${(j.assignedAssocId||[]).includes(uid)||j.createdBy===uid?
-                j.status==='pending_review'
-                  ? `<span style="font-size:11px;color:#97266d;font-weight:600">Pending Review</span>`
-                  : `<button class="btn btn-teal btn-sm" onclick="openSubmitReviewModal('${j.id}')">Submit for Review</button>`
-                :''}
-              ${state.user.role==='manager'||state.user.role==='admin'?
-                j.status==='pending_review'
-                  ? `<button class="btn btn-primary btn-sm" onclick="openReviewCompleteModal('${j.id}')">Review</button>`
-                  : j.status!=='completed' ? `<button class="btn btn-teal btn-sm" onclick="openCompleteModal('${j.id}')">Complete</button>` : ''
-                :''}
+              ${(()=>{
+                const role = state.user.role;
+                if (role === 'manager' || role === 'admin') {
+                  return j.status === 'pending_review'
+                    ? `<button class="btn btn-primary btn-sm" onclick="openReviewCompleteModal('${j.id}')">Review</button>`
+                    : j.status !== 'completed' ? `<button class="btn btn-teal btn-sm" onclick="openCompleteModal('${j.id}')">Complete</button>` : '';
+                }
+                // Associate: per-associate submission logic
+                if (!(j.assignedAssocId||[]).includes(uid) && j.createdBy !== uid) return '';
+                const mySubmission = (j.associateSubmissions||[]).find(s => s.assocId === uid);
+                if (mySubmission) {
+                  return `<span style="font-size:11px;color:#276749;font-weight:600">✓ Submitted (${mySubmission.hours}h)</span>`;
+                }
+                if (j.status === 'pending_review' || j.status === 'completed') {
+                  return `<span style="font-size:11px;color:#97266d;font-weight:600">Pending Review</span>`;
+                }
+                const allLocs = j.locations || [];
+                const hasPerLoc = allLocs.some(l => l.assignedAssocId);
+                const myLocs = (hasPerLoc) ? allLocs.filter(l => l.assignedAssocId === uid) : allLocs;
+                const allMyDone = myLocs.length > 0 && myLocs.every(l => l.status === 'done');
+                return allMyDone
+                  ? `<button class="btn btn-teal btn-sm" onclick="openMyWorkSubmitModal('${j.id}')">Submit My Work</button>`
+                  : `<span style="font-size:11px;color:var(--text-light)">${myLocs.filter(l=>l.status==='done').length}/${myLocs.length} done</span>`;
+              })()}
               <button class="btn btn-ghost btn-sm" onclick="openJobModal('${j.id}')">Details</button>
             </div>
           </div>
@@ -1424,7 +1483,15 @@ function renderManagerQueue() {
             <div>
               <div style="font-weight:700">${j.customerId} — ${jobTypeName(j.jobTypeId)}</div>
               <div style="font-size:12px;color:var(--text-light)">Submitted by: ${j.submittedByName||'—'} | Due: ${j.dueDate||'—'}</div>
-              ${j.associateNotes?`<div style="font-size:12px;margin-top:4px;color:#553c9a">Associate note: ${j.associateNotes}</div>`:''}
+              ${(()=>{
+                const subs = j.associateSubmissions || [];
+                if (!subs.length) return j.associateNotes?`<div style="font-size:12px;margin-top:4px;color:#553c9a">Associate note: ${j.associateNotes}</div>`:'';
+                const totalHours = subs.reduce((s,sub)=>s+(sub.hours||0),0);
+                return `<div style="font-size:12px;margin-top:5px;display:flex;gap:12px;flex-wrap:wrap">
+                  ${subs.map(s=>`<span style="color:#276749"><strong>${s.assocName}:</strong> ${s.hours}h${s.notes?` — "${s.notes}"`:''}` ).join('')}
+                  <span style="font-weight:700;color:var(--primary)">Total: ${totalHours}h</span>
+                </div>`;
+              })()}
             </div>
             <div style="display:flex;gap:8px">
               <button class="btn btn-primary btn-sm" onclick="openReviewCompleteModal('${j.id}')">Review & Complete</button>
@@ -1524,17 +1591,19 @@ function renderCreateJob() {
             </select>
           </div>
         </div>
-        <div id="cj-job-fields"></div>
-        <div class="form-group">
-          <label>Assign to Manager</label>
-          <select name="assignedManagerId">
-            <option value="">Select manager…</option>
-            ${managers.map(u=>`<option value="${u.uid}">${u.displayName}</option>`).join('')}
-          </select>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Assign to Manager</label>
+            <select name="assignedManagerId">
+              <option value="">Select manager…</option>
+              ${managers.map(u=>`<option value="${u.uid}">${u.displayName}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label>Due Date</label><input type="date" name="dueDate"/></div>
         </div>
-        <div class="form-group"><label>Due Date</label><input type="date" name="dueDate"/></div>
         <div class="form-group"><label>Instructions <span style="font-weight:400;color:var(--text-light)">(shown to associates)</span></label><textarea name="instructions" rows="2" placeholder="What needs to be done, safety notes, etc."></textarea></div>
         <div class="form-group"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
+        <div id="cj-job-fields"></div>
         <div class="form-group">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <label style="margin:0">Locations / Tasks <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
@@ -1656,7 +1725,7 @@ function renderTemplates() {
             ${mgr ? `<span>👤 ${mgr.displayName}</span>` : ''}
             ${locCount ? `<span>📍 ${locCount} location${locCount===1?'':'s'}</span>` : ''}
             ${dueLabel ? `<span>📅 ${dueLabel}</span>` : ''}
-            ${t.billable ? '<span>💲 Billable</span>' : ''}
+            ${t.billable && state.user.role !== 'office_support' ? '<span>💲 Billable</span>' : ''}
           </div>
           ${t.instructions ? `<div style="font-size:12px;color:#555;background:#f7f8fc;border-radius:5px;padding:6px 8px">${t.instructions.substring(0,120)}${t.instructions.length>120?'…':''}</div>` : ''}
           <button class="btn btn-primary btn-sm" style="align-self:flex-start" onclick="useTemplate('${t.id}')">▶ Use Template</button>
@@ -1936,10 +2005,10 @@ async function showEditTemplateModal(tplId) {
         <textarea id="etpl-instr" rows="2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:7px;font-size:14px;resize:vertical">${tpl.instructions||''}</textarea></div>
       <div class="form-group"><label>Notes</label>
         <textarea id="etpl-notes" rows="2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:7px;font-size:14px;resize:vertical">${tpl.notes||''}</textarea></div>
-      <div class="toggle-row">
+      ${state.user.role !== 'office_support' ? `<div class="toggle-row">
         <label class="toggle"><input type="checkbox" id="etpl-billable" ${tpl.billable?'checked':''}/><span class="toggle-slider"></span></label>
         <span>Billable</span>
-      </div>
+      </div>` : ''}
       ${locCount ? `<div style="margin-top:10px;font-size:13px;color:var(--text-light)">📍 ${locCount} location${locCount===1?'':'s'} saved — use "Load Template → Edit" to update locations.</div>` : ''}
     </div>
     <div class="modal-footer">
@@ -2005,10 +2074,10 @@ function showCreateTemplateModal() {
         <textarea id="ctpl-instr" rows="2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:7px;font-size:14px;resize:vertical"></textarea></div>
       <div class="form-group"><label>Notes</label>
         <textarea id="ctpl-notes" rows="2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:7px;font-size:14px;resize:vertical"></textarea></div>
-      <div class="toggle-row">
+      ${state.user.role !== 'office_support' ? `<div class="toggle-row">
         <label class="toggle"><input type="checkbox" id="ctpl-billable" checked/><span class="toggle-slider"></span></label>
         <span>Billable</span>
-      </div>
+      </div>` : ''}
       <div style="font-size:12px;color:var(--text-light);margin-top:8px">Tip: Create a job first with locations, then use "Save as Template" to capture everything including locations.</div>
     </div>
     <div class="modal-footer">
@@ -2684,6 +2753,288 @@ async function deleteJobType(id) {
   }
 }
 
+// ── Integrations (Logiwa) ──────────────────────────────────────────────────
+function renderIntegrations() {
+  return `
+    <div class="section-header"><h1>🔌 Integrations</h1></div>
+    <div class="card" style="max-width:700px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <div style="width:44px;height:44px;background:#1a56db;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px">📦</div>
+        <div>
+          <div style="font-weight:700;font-size:16px">Logiwa WMS</div>
+          <div style="font-size:13px;color:var(--text-light)">Inventory pull & movement push</div>
+        </div>
+        <div id="logiwa-status-badge" style="margin-left:auto">
+          <span style="font-size:12px;color:var(--text-light)">Checking…</span>
+        </div>
+      </div>
+
+      <div id="logiwa-config-section">
+        <div class="form-row">
+          <div class="form-group">
+            <label>API Email</label>
+            <input id="logiwa-email" type="email" value="" placeholder="logiwa_api_user@example.com"/>
+          </div>
+          <div class="form-group">
+            <label>API Password</label>
+            <input id="logiwa-password" type="password" value="" placeholder="••••••••"/>
+          </div>
+        </div>
+        <div class="toggle-row" style="margin-bottom:16px">
+          <label class="toggle"><input type="checkbox" id="logiwa-enabled"/><span class="toggle-slider"></span></label>
+          <span>Enable Logiwa integration</span>
+        </div>
+        <button class="btn btn-primary" onclick="saveLogiwaConfig()" id="logiwa-save-btn">Save & Test Connection</button>
+      </div>
+
+      <hr style="margin:20px 0;border:none;border-top:1px solid var(--border)"/>
+
+      <div id="logiwa-client-mapping-section" style="display:none">
+        <div style="font-weight:600;margin-bottom:10px">Customer → Logiwa Client Mapping</div>
+        <div style="font-size:13px;color:var(--text-light);margin-bottom:12px">
+          Map each customer in this app to their Logiwa client account. Used for inventory lookups.
+        </div>
+        <div id="logiwa-mappings-list"></div>
+        <button class="btn btn-ghost btn-sm" onclick="loadLogiwaClients()" style="margin-top:8px">🔄 Load Logiwa Clients</button>
+        <button class="btn btn-primary btn-sm" onclick="saveLogiwaMappings()" style="margin-top:8px;margin-left:8px">Save Mappings</button>
+      </div>
+
+      <hr style="margin:20px 0;border:none;border-top:1px solid var(--border)" id="logiwa-sync-divider" style="display:none"/>
+
+      <div id="logiwa-sync-section" style="display:none">
+        <div style="font-weight:600;margin-bottom:6px">Inventory Cache</div>
+        <div style="font-size:13px;color:var(--text-light);margin-bottom:12px">
+          Sync all inventory from Logiwa into a local cache for fast SKU lookups.
+          Run this periodically (e.g. daily) to keep data fresh.
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="btn btn-teal" onclick="startLogiwaSync()" id="logiwa-sync-btn">⟳ Sync Inventory Now</button>
+          <div id="logiwa-sync-status" style="font-size:13px;color:var(--text-light)"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+let _logiwaClients = [];
+
+async function loadLogiwaStatus() {
+  try {
+    const s = await apiFetch('/api/logiwa/status');
+    const badge = document.getElementById('logiwa-status-badge');
+    if (!badge) return;
+
+    if (!s.configured) {
+      badge.innerHTML = `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600">Not configured</span>`;
+      return;
+    }
+    if (s.ok) {
+      badge.innerHTML = `<span style="background:#d1fae5;color:#065f46;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600">✓ Connected</span>`;
+    } else {
+      badge.innerHTML = `<span style="background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600">✗ Auth failed</span>`;
+    }
+
+    // Populate fields
+    const emailEl = document.getElementById('logiwa-email');
+    const passEl = document.getElementById('logiwa-password');
+    const enabledEl = document.getElementById('logiwa-enabled');
+    if (emailEl) emailEl.value = s.email || '';
+    if (passEl && s.ok) passEl.value = '••••••••';
+    if (enabledEl) enabledEl.checked = s.configured;
+
+    // Show mapping and sync sections
+    const mapSec = document.getElementById('logiwa-client-mapping-section');
+    const syncSec = document.getElementById('logiwa-sync-section');
+    const syncDiv = document.getElementById('logiwa-sync-divider');
+    if (mapSec && s.ok) { mapSec.style.display = ''; renderLogiwaMappings(s.clientMappings || {}); }
+    if (syncSec && s.ok) { syncSec.style.display = ''; if (syncDiv) syncDiv.style.display = ''; }
+
+    // Show last sync status
+    if (s.ok && s.lastSync) {
+      const syncStatus = document.getElementById('logiwa-sync-status');
+      if (syncStatus) syncStatus.textContent = `Last sync: ${new Date(s.lastSync._seconds ? s.lastSync._seconds*1000 : s.lastSync).toLocaleString()}`;
+    }
+  } catch (err) {
+    console.error('Logiwa status error:', err);
+  }
+}
+
+function renderLogiwaMappings(mappings) {
+  const customers = state.data.customers || [];
+  const container = document.getElementById('logiwa-mappings-list');
+  if (!container) return;
+  container.innerHTML = customers.map(c => `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <span style="width:200px;font-size:13px;font-weight:500">${c}</span>
+      <span style="color:var(--text-light);font-size:13px">→</span>
+      <select id="lmap-${c.replace(/[^a-z0-9]/gi,'_')}" style="flex:1;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+        <option value="">— Not mapped —</option>
+        ${_logiwaClients.map(cl => `<option value="${cl.identifier}" ${mappings[c]===cl.identifier?'selected':''}>${cl.name}</option>`).join('')}
+      </select>
+    </div>`).join('');
+}
+
+async function loadLogiwaClients() {
+  try {
+    const r = await apiFetch('/api/logiwa/clients');
+    _logiwaClients = r.clients || [];
+    const mappings = {};
+    // Re-read current mappings from the existing dropdowns
+    (state.data.customers || []).forEach(c => {
+      const sel = document.getElementById(`lmap-${c.replace(/[^a-z0-9]/gi,'_')}`);
+      if (sel) mappings[c] = sel.value;
+    });
+    renderLogiwaMappings(mappings);
+    toast(`Loaded ${_logiwaClients.length} Logiwa clients`);
+  } catch (err) { toast('Error: ' + err.message, 3000); }
+}
+
+async function saveLogiwaConfig() {
+  const btn = document.getElementById('logiwa-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const email = document.getElementById('logiwa-email')?.value?.trim();
+    const passwordVal = document.getElementById('logiwa-password')?.value;
+    const enabled = document.getElementById('logiwa-enabled')?.checked;
+    const password = (passwordVal === '••••••••') ? undefined : passwordVal;
+
+    const body = { email, enabled };
+    if (password !== undefined) body.password = password;
+
+    await apiFetch('/api/logiwa/config', { method: 'PUT', body: JSON.stringify(body) });
+    toast('Logiwa settings saved & connected ✓');
+    await loadLogiwaStatus();
+  } catch (err) { toast('Error: ' + err.message, 3000); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Save & Test Connection'; } }
+}
+
+async function saveLogiwaMappings() {
+  const mappings = {};
+  (state.data.customers || []).forEach(c => {
+    const sel = document.getElementById(`lmap-${c.replace(/[^a-z0-9]/gi,'_')}`);
+    if (sel?.value) mappings[c] = sel.value;
+  });
+  try {
+    await apiFetch('/api/logiwa/config', { method: 'PUT', body: JSON.stringify({ clientMappings: mappings }) });
+    toast('Client mappings saved ✓');
+  } catch (err) { toast('Error: ' + err.message, 3000); }
+}
+
+async function startLogiwaSync() {
+  const btn = document.getElementById('logiwa-sync-btn');
+  const status = document.getElementById('logiwa-sync-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Syncing…'; }
+  if (status) status.textContent = 'Starting sync…';
+  try {
+    await apiFetch('/api/logiwa/sync', { method: 'POST', body: '{}' });
+    if (status) status.textContent = 'Sync running in background — check back in a few minutes.';
+    toast('Logiwa inventory sync started');
+    // Poll for completion
+    let polls = 0;
+    const pollTimer = setInterval(async () => {
+      polls++;
+      if (polls > 60) { clearInterval(pollTimer); return; }
+      try {
+        const s = await apiFetch('/api/logiwa/status');
+        if (s.lastSync && status) {
+          const t = new Date(s.lastSync._seconds ? s.lastSync._seconds*1000 : s.lastSync).toLocaleString();
+          status.textContent = `Last sync: ${t}`;
+          if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Inventory Now'; }
+          clearInterval(pollTimer);
+        }
+      } catch {}
+    }, 5000);
+  } catch (err) { toast('Error: ' + err.message, 3000); if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Inventory Now'; } }
+}
+
+// ── Logiwa Movement Modal ────────────────────────────────────────────────────
+async function openLogiwaMovementModal(jobId, locId, defaultSku) {
+  // Try to look up inventory by SKU from cache
+  let items = [];
+  if (defaultSku) {
+    try {
+      const r = await apiFetch(`/api/logiwa/inventory?sku=${encodeURIComponent(defaultSku)}&limit=20`);
+      items = r.items || [];
+    } catch {}
+  }
+
+  const invOptions = items.length
+    ? items.map(i => `<option value="${i.inventoryId}">${i.sku} | ${i.location} | Qty: ${i.totalQty} avail: ${i.availQty}</option>`).join('')
+    : `<option value="">— Enter Inventory ID manually —</option>`;
+
+  showModal(`
+    <div class="modal-header">
+      <h2>📦 Post to Logiwa</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      ${items.length ? `
+        <div class="form-group">
+          <label>Inventory Record</label>
+          <select id="lgw-inv-sel" style="width:100%">
+            ${invOptions}
+          </select>
+        </div>` : `
+        <div class="form-group">
+          <label>Logiwa Inventory ID <span style="color:var(--text-light);font-weight:400">(UUID from Logiwa)</span></label>
+          <input id="lgw-inv-manual" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value=""/>
+          <div style="font-size:12px;color:var(--text-light);margin-top:4px">
+            ${defaultSku ? `SKU "${defaultSku}" not found in cache. Run a Logiwa sync first, or enter the ID manually.` : 'Run Logiwa sync to enable SKU lookup.'}
+          </div>
+        </div>`}
+      <div class="form-row">
+        <div class="form-group">
+          <label>Movement Type</label>
+          <select id="lgw-type">
+            <option value="add">➕ Add (stock received / BTS)</option>
+            <option value="remove">➖ Remove (picked / consumed)</option>
+            <option value="adjust">⚖️ Adjust (set to quantity)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Quantity</label>
+          <input id="lgw-qty" type="number" min="1" value="1"/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Note <span style="color:var(--text-light);font-weight:400">(optional)</span></label>
+        <input id="lgw-note" type="text" placeholder="e.g. BTS from kitting job"/>
+      </div>
+      <div id="lgw-error" style="color:#dc2626;font-size:13px;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitLogiwaMovement('${jobId}','${locId||''}')">Post to Logiwa</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function submitLogiwaMovement(jobId, locId) {
+  const invSel = document.getElementById('lgw-inv-sel');
+  const invManual = document.getElementById('lgw-inv-manual');
+  const inventoryId = (invSel?.value || invManual?.value || '').trim();
+  const type = document.getElementById('lgw-type')?.value;
+  const quantity = parseInt(document.getElementById('lgw-qty')?.value || '0');
+  const note = document.getElementById('lgw-note')?.value?.trim() || '';
+  const errEl = document.getElementById('lgw-error');
+
+  if (!inventoryId) { if (errEl) { errEl.textContent = 'Select or enter an inventory ID'; errEl.style.display = ''; } return; }
+  if (!quantity || quantity < 1) { if (errEl) { errEl.textContent = 'Quantity must be at least 1'; errEl.style.display = ''; } return; }
+
+  const submitBtn = document.querySelector('.modal-footer .btn-primary');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Posting…'; }
+
+  try {
+    await apiFetch('/api/logiwa/movement', {
+      method: 'POST',
+      body: JSON.stringify({ type, inventoryId, quantity, note, jobId, locId }),
+    });
+    document.querySelector('.modal-overlay')?.remove();
+    toast(`✓ Logiwa: ${type} ${quantity} units posted`);
+  } catch (err) {
+    if (errEl) { errEl.textContent = 'Error: ' + err.message; errEl.style.display = ''; }
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Post to Logiwa'; }
+  }
+}
+
 // ── Users & Teams ──
 function renderUsersTeams() {
   const users = state.data.users || [];
@@ -3164,7 +3515,21 @@ async function openJobModal(jobId) {
           </div>`;
         }).join('')}
       </div>` : ''}
-      ${job.associateNotes?`<div class="form-group"><label style="color:#553c9a">Associate Notes</label><div style="padding:8px;background:#faf5ff;border:1px solid #e9d8fd;border-radius:6px;font-size:13px">${job.associateNotes}</div></div>`:''}
+      ${(()=>{
+        // Show submissions for manager/admin — even mid-job so they can see who's submitted
+        const subs = job.associateSubmissions || [];
+        if (!subs.length) {
+          return job.associateNotes
+            ? `<div class="form-group"><label style="color:#553c9a">Associate Notes</label><div style="padding:8px;background:#faf5ff;border:1px solid #e9d8fd;border-radius:6px;font-size:13px">${job.associateNotes}</div></div>`
+            : '';
+        }
+        if (['manager','admin'].includes(state.user.role)) return renderAssocSubmissions(job);
+        // For associates, just show their own submission
+        const mine = subs.find(s => s.assocId === state.user.uid);
+        return mine
+          ? `<div style="padding:8px 12px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:13px;margin-top:8px">✅ You submitted <strong>${mine.hours}h</strong>${mine.notes?` — "${mine.notes}"`:''}</div>`
+          : '';
+      })()}
       ${job.managerNotes?`<div class="form-group"><label style="color:#2b6cb0">Manager Notes</label><div style="padding:8px;background:#ebf8ff;border:1px solid #bee3f8;border-radius:6px;font-size:13px">${job.managerNotes}</div></div>`:''}
     </div>
     <div class="modal-footer">
@@ -3173,8 +3538,22 @@ async function openJobModal(jobId) {
           ? `<button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();openReviewCompleteModal('${job.id}')">Review & Complete</button>`
           : `<button class="btn btn-teal" onclick="this.closest('.modal-overlay').remove();openCompleteModal('${job.id}')">Complete</button>`
         :''}
-      ${job.status!=='completed' && job.status!=='pending_review' && (job.assignedAssocId||[]).includes(state.user.uid) && state.user.role==='associate'?
-        `<button class="btn btn-teal" onclick="this.closest('.modal-overlay').remove();openSubmitReviewModal('${job.id}')">Submit for Review</button>`:''}
+      ${(()=>{
+        // Associate footer button — mirrors My Jobs logic
+        if (state.user.role !== 'associate') return '';
+        const uid = state.user.uid;
+        if (!(job.assignedAssocId||[]).includes(uid)) return '';
+        if (job.status === 'completed' || job.status === 'pending_review') return '';
+        const mySubmission = (job.associateSubmissions||[]).find(s => s.assocId === uid);
+        if (mySubmission) return `<span style="font-size:12px;color:#276749;font-weight:600">✓ You submitted ${mySubmission.hours}h</span>`;
+        const allLocs = job.locations || [];
+        const hasPerLoc = allLocs.some(l => l.assignedAssocId);
+        const myLocs = hasPerLoc ? allLocs.filter(l => l.assignedAssocId === uid) : allLocs;
+        const allMyDone = myLocs.length > 0 && myLocs.every(l => l.status === 'done');
+        return allMyDone
+          ? `<button class="btn btn-teal" onclick="this.closest('.modal-overlay').remove();openMyWorkSubmitModal('${job.id}')">Submit My Work</button>`
+          : '';
+      })()}
       ${(state.user.role==='admin'||state.user.role==='manager'||job.createdBy===state.user?.uid)?
         `<button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove();showEditJobModal('${job.id}')">✏ Edit</button>`:''}
       ${['admin','manager','office_support'].includes(state.user.role) && job.status !== 'completed' ? `
@@ -3214,23 +3593,24 @@ async function showEditJobModal(jobId) {
           ${managers.map(m=>`<option value="${m.uid}" ${job.assignedManagerId===m.uid?'selected':''}>${m.displayName}</option>`).join('')}
         </select>
       </div>` : ''}
-      <div class="form-group">
+      ${state.user.role !== 'office_support' ? `<div class="form-group">
         <label>Assign Associates</label>
-        <div style="border:1px solid var(--border);border-radius:7px;padding:10px;max-height:160px;overflow-y:auto;background:#fff">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#f9f9fb;min-height:44px">
           ${(()=>{
             const assocs=(state.data.users||[]).filter(u=>u.role==='associate'||u.role==='manager'||u.role==='admin');
-            if(!assocs.length) return '<p style="color:var(--text-light);font-size:12px">No users available yet</p>';
-            return assocs.map(u=>`
-              <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:13px">
-                <input type="checkbox" class="ej-assoc-cb" value="${u.uid}" ${(job.assignedAssocId||[]).includes(u.uid)?'checked':''}/>
-                <div class="user-avatar" style="width:24px;height:24px;font-size:10px;flex-shrink:0">${(u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')}</div>
+            if(!assocs.length) return '<p style="color:var(--text-light);font-size:12px;margin:0">No users available yet</p>';
+            return assocs.map(u=>{
+              const initials=(u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
+              const checked=(job.assignedAssocId||[]).includes(u.uid);
+              return `<label style="display:flex;align-items:center;gap:6px;padding:5px 10px 5px 6px;border-radius:20px;border:2px solid ${checked?'var(--primary)':'var(--border)'};background:${checked?'#eef0ff':'#fff'};cursor:pointer;font-size:13px;font-weight:500;transition:all .15s" class="ej-assoc-pill" onclick="setTimeout(()=>{const cb=this.querySelector('input');this.style.borderColor=cb.checked?'var(--primary)':'var(--border)';this.style.background=cb.checked?'#eef0ff':'#fff'},0)">
+                <input type="checkbox" class="ej-assoc-cb" value="${u.uid}" ${checked?'checked':''} style="display:none"/>
+                <div class="user-avatar" style="width:22px;height:22px;font-size:9px;flex-shrink:0">${initials}</div>
                 <span>${u.displayName}</span>
-                <span style="font-size:11px;color:var(--text-light);margin-left:auto">${u.role.replace('_',' ')}</span>
-              </label>`).join('');
+              </label>`;
+            }).join('');
           })()}
         </div>
-        <p style="font-size:11px;color:var(--text-light);margin-top:4px">Tick all associates who will work on this job</p>
-      </div>
+      </div>` : ''}
       <div style="font-weight:600;font-size:13px;margin-bottom:8px">Job Fields</div>
       <form id="ej-fields-form">
         ${renderFieldInputs(fields, job.fields||{})}
@@ -3405,6 +3785,123 @@ async function submitForReview(jobId) {
   }
 }
 
+// ── Submit My Work Modal (Associate — per-person hours + notes) ──
+function openMyWorkSubmitModal(jobId) {
+  const job = state.data.jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const uid = state.user.uid;
+  const allLocs = job.locations || [];
+  const hasPerLoc = allLocs.some(l => l.assignedAssocId);
+  const myLocs = hasPerLoc ? allLocs.filter(l => l.assignedAssocId === uid) : allLocs;
+  const doneLocs = myLocs.filter(l => l.status === 'done');
+  const existing = (job.associateSubmissions || []).find(s => s.assocId === uid);
+
+  // Count how many other associates still need to submit
+  const locsWithAssoc = allLocs.filter(l => l.assignedAssocId);
+  const allAssocIds = [...new Set(locsWithAssoc.map(l => l.assignedAssocId))];
+  const submittedIds = (job.associateSubmissions || []).map(s => s.assocId);
+  const othersStillPending = allAssocIds.filter(id => id !== uid && !submittedIds.includes(id)).length;
+
+  showModal(`
+    <div class="modal-header"><h2>Submit My Work — ${job.customerId}</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:7px;padding:10px;margin-bottom:14px;font-size:13px">
+        <strong>✅ ${doneLocs.length} task${doneLocs.length===1?'':'s'} completed</strong>
+        ${othersStillPending > 0 ? `<div style="color:var(--text-light);margin-top:3px;font-size:12px">${othersStillPending} other team member${othersStillPending===1?'':'s'} still working — job will go to manager once everyone submits.</div>` : ''}
+      </div>
+      <div class="form-group">
+        <label>Hours Worked <span style="color:var(--danger)">*</span></label>
+        <input type="number" id="my-work-hours" min="0" max="99" step="0.5" placeholder="e.g. 2.5"
+          value="${existing ? existing.hours : ''}"
+          style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font-size:15px;font-weight:600"/>
+        <div style="font-size:11px;color:var(--text-light);margin-top:3px">Total time you spent on your tasks.</div>
+      </div>
+      <div class="form-group">
+        <label>Notes <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
+        <textarea id="my-work-notes" rows="3" placeholder="Any observations, issues encountered…"
+          style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical">${existing ? existing.notes : ''}</textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-teal" id="my-work-submit-btn" onclick="submitMyWork('${jobId}')">Submit My Work</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+  setTimeout(() => document.getElementById('my-work-hours')?.focus(), 50);
+}
+
+async function submitMyWork(jobId) {
+  const hoursVal = document.getElementById('my-work-hours')?.value;
+  const hours = Number(hoursVal);
+  if (!hoursVal || isNaN(hours) || hours <= 0) {
+    toast('Please enter the hours you worked', 2000);
+    return;
+  }
+  const notes = document.getElementById('my-work-notes')?.value || '';
+  const btn = document.getElementById('my-work-submit-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const result = await apiFetch(`/api/jobs/${jobId}/associate-submit`, {
+      method: 'PUT', body: JSON.stringify({ hours, notes }),
+    });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadData();
+    renderView();
+    toast(result.pendingReview
+      ? '✅ Work submitted — job sent to manager for review'
+      : '✅ Work submitted — waiting for other team members');
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+    btn.disabled = false; btn.textContent = 'Submit My Work';
+  }
+}
+
+// ── Associate Submissions Panel (shared helper) ──
+function renderAssocSubmissions(job) {
+  const subs = job.associateSubmissions || [];
+  if (!subs.length) {
+    return job.associateNotes
+      ? `<div style="padding:10px;background:#faf5ff;border:1px solid #e9d8fd;border-radius:6px;font-size:13px;color:#553c9a;margin-bottom:14px">
+           <strong>Associate notes:</strong> ${job.associateNotes}
+         </div>`
+      : '';
+  }
+  const totalHours = subs.reduce((s, sub) => s + (sub.hours || 0), 0);
+  const totalTasks = subs.reduce((s, sub) => s + (sub.taskCount || 0), 0);
+  return `
+    <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:7px;padding:12px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:#276749;margin-bottom:8px;letter-spacing:0.5px">ASSOCIATE SUBMISSIONS</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:2px solid #9ae6b4">
+            <th style="text-align:left;padding:5px 8px;font-size:12px;color:#276749;font-weight:700">Associate</th>
+            <th style="text-align:center;padding:5px 8px;font-size:12px;color:#276749;font-weight:700">Tasks</th>
+            <th style="text-align:center;padding:5px 8px;font-size:12px;color:#276749;font-weight:700">Hours</th>
+            <th style="text-align:left;padding:5px 8px;font-size:12px;color:#276749;font-weight:700">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${subs.map(s=>`
+          <tr style="border-bottom:1px solid rgba(154,230,180,0.4)">
+            <td style="padding:6px 8px;font-weight:600">${s.assocName}</td>
+            <td style="text-align:center;padding:6px 8px;color:var(--text-light)">${s.taskCount||0}</td>
+            <td style="text-align:center;padding:6px 8px;font-weight:700;color:var(--primary);font-size:15px">${s.hours||0}h</td>
+            <td style="padding:6px 8px;color:var(--text-light);font-size:12px">${s.notes||'—'}</td>
+          </tr>`).join('')}
+        </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid #9ae6b4;background:rgba(240,255,244,0.8)">
+            <td style="padding:7px 8px;font-weight:700;color:#276749">TOTAL</td>
+            <td style="text-align:center;padding:7px 8px;font-weight:700">${totalTasks}</td>
+            <td style="text-align:center;padding:7px 8px;font-weight:700;color:var(--primary);font-size:16px">${totalHours}h</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>`;
+}
+
 // ── Review & Complete Modal (Manager/Admin) ──
 async function openReviewCompleteModal(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
@@ -3415,13 +3912,7 @@ async function openReviewCompleteModal(jobId) {
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
-      <div style="margin-bottom:14px">
-        <div style="font-size:13px;color:var(--text-light);margin-bottom:4px">Submitted by <strong>${job.submittedByName||'associate'}</strong></div>
-        ${job.associateNotes ? `
-          <div style="padding:10px;background:#faf5ff;border:1px solid #e9d8fd;border-radius:6px;font-size:13px;color:#553c9a">
-            <strong>Associate notes:</strong> ${job.associateNotes}
-          </div>` : ''}
-      </div>
+      ${renderAssocSubmissions(job)}
       <form id="review-complete-form">
         ${renderFieldInputs(fields, job.fields||{})}
         ${state.user.role==='admin'?`<div class="toggle-row">
@@ -3435,6 +3926,7 @@ async function openReviewCompleteModal(jobId) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" id="review-complete-btn" onclick="submitReviewComplete('${jobId}')">Approve & Complete</button>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="openLogiwaMovementModal('${jobId}','','')">📦 Post to Logiwa</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
 }
@@ -3484,22 +3976,27 @@ function showAssignLocationsModal(jobId) {
   const locs = job.locations || [];
   if (!locs.length) { toast('This job has no locations to assign'); return; }
 
-  // Collect all unique reference data column names across all locations
-  const allRefCols = [...new Set(locs.flatMap(l => Object.keys(l.referenceData || {})))];
-  const savedTypes = job.referenceDataTypes || {};
-  const colTypeHtml = allRefCols.length ? `
-    <div style="background:#f0f4ff;border:1px solid #c3dafe;border-radius:7px;padding:12px;margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;color:var(--primary);margin-bottom:8px">REFERENCE COLUMN TYPES</div>
-      <div style="font-size:12px;color:var(--text-light);margin-bottom:10px">Set the input type associates will see when filling in each field.</div>
-      ${allRefCols.map(col => `
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-          <span style="font-size:13px;font-weight:600;min-width:140px;flex:1">${col}</span>
-          <select data-col-type="${col}" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:160px">
-            <option value="text"  ${(savedTypes[col]||'text')==='text'  ?'selected':''}>Text (free input)</option>
-            <option value="number"${(savedTypes[col]||'text')==='number'?'selected':''}>Number</option>
-            <option value="date"  ${(savedTypes[col]||'text')==='date'  ?'selected':''}>Date (YYYYMMDD)</option>
-          </select>
-        </div>`).join('')}
+  // Admin-only: manually define capture columns associates will fill in
+  const savedCaptureTypes = job.referenceDataTypes || {};
+  const savedCaptureEntries = Object.entries(savedCaptureTypes);
+  const colTypeHtml = state.user.role === 'admin' ? `
+    <div style="background:#fffaf0;border:1px solid #fbd38d;border-radius:7px;padding:12px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:#744210;margin-bottom:4px">CAPTURE COLUMNS <span style="font-weight:400;color:#92400e;font-size:11px">(Admin only)</span></div>
+      <div style="font-size:12px;color:var(--text-light);margin-bottom:10px">Define blank fields associates will fill in when completing each task. These are separate from the read-only reference data.</div>
+      <div id="capture-cols-list">
+        ${savedCaptureEntries.map(([name, type]) => `
+          <div class="capture-col-row" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <input type="text" class="capture-col-name" placeholder="Column name" value="${name}"
+              style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+            <select class="capture-col-type" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:150px">
+              <option value="text"   ${type==='text'   ?'selected':''}>Text</option>
+              <option value="number" ${type==='number' ?'selected':''}>Number</option>
+              <option value="date"   ${type==='date'   ?'selected':''}>Date (YYYYMMDD)</option>
+            </select>
+            <button onclick="this.closest('.capture-col-row').remove()" style="background:none;border:none;color:#e53e3e;font-size:20px;cursor:pointer;line-height:1;padding:0 4px">×</button>
+          </div>`).join('')}
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="addCaptureColRow()" style="margin-top:4px">+ Add Column</button>
     </div>` : '';
 
 
@@ -3594,13 +4091,34 @@ function bulkAssignApply() {
   toast(`${count} location${count > 1 ? 's' : ''} assigned to ${name}`);
 }
 
+function addCaptureColRow() {
+  const list = document.getElementById('capture-cols-list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'capture-col-row';
+  row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px';
+  row.innerHTML = `
+    <input type="text" class="capture-col-name" placeholder="Column name"
+      style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+    <select class="capture-col-type" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:150px">
+      <option value="text">Text</option>
+      <option value="number">Number</option>
+      <option value="date">Date (YYYYMMDD)</option>
+    </select>
+    <button onclick="this.closest('.capture-col-row').remove()" style="background:none;border:none;color:#e53e3e;font-size:20px;cursor:pointer;line-height:1;padding:0 4px">×</button>`;
+  list.appendChild(row);
+  row.querySelector('.capture-col-name').focus();
+}
+
 async function submitAssignLocations(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
   if (!job) return;
-  // Collect manager-defined column types
+  // Collect admin-defined capture column definitions
   const referenceDataTypes = {};
-  document.querySelectorAll('[data-col-type]').forEach(sel => {
-    referenceDataTypes[sel.dataset.colType] = sel.value;
+  document.querySelectorAll('.capture-col-row').forEach(row => {
+    const name = row.querySelector('.capture-col-name')?.value?.trim();
+    const type = row.querySelector('.capture-col-type')?.value || 'text';
+    if (name) referenceDataTypes[name] = type;
   });
   const selects = [...document.querySelectorAll('.loc-assign-select')];
   const locations = (job.locations||[]).map(l => {
@@ -3817,35 +4335,49 @@ function openMarkLocationDoneModal(jobId, locId) {
   if (!loc) return;
   delete _pendingPhotos[`${jobId}_${locId}`];
   const captureFields = (job.csvCaptureFields && job.csvCaptureFields.length) ? job.csvCaptureFields : getJobFields(job.jobTypeId);
-  const refTypes = job.referenceDataTypes || {};
+
+  // Reference data from CSV — read-only context
   const refEntries = Object.entries(loc.referenceData || {}).filter(([,v]) => v);
   const refHtml = refEntries.length ? `
     <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;padding:10px;margin-bottom:14px">
-      ${refEntries.map(([k,v])=>{
-        const colType = refTypes[k] || 'text';
+      <div style="font-size:11px;font-weight:700;color:#276749;margin-bottom:6px;letter-spacing:0.5px">REFERENCE INFO</div>
+      ${refEntries.map(([k,v])=>`
+        <div style="display:flex;gap:12px;font-size:13px;padding:3px 0">
+          <span style="color:#276749;min-width:110px;font-weight:600;flex-shrink:0">${k}</span>
+          <span style="color:#2d3748">${v}</span>
+        </div>`).join('')}
+    </div>` : (loc.instructions ? `<div style="padding:10px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:13px;margin-bottom:14px;color:#276749">${loc.instructions}</div>` : '');
+
+  // Admin-defined capture columns — blank inputs for associate to fill in
+  const captureTypeDefs = job.referenceDataTypes || {};
+  const captureTypeEntries = Object.entries(captureTypeDefs);
+  const captureColsHtml = captureTypeEntries.length ? `
+    <div style="background:#fff8f0;border:1px solid #fbd38d;border-radius:6px;padding:10px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:#744210;margin-bottom:8px;letter-spacing:0.5px">FILL IN</div>
+      ${captureTypeEntries.map(([colName, colType]) => {
+        const existing = (loc.capturedData || {})[colName] || '';
         if (colType === 'date') {
-          // Show date as editable date picker, pre-filled in YYYYMMDD format
-          const iso = v.length === 8 ? `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}` : v;
+          const iso = existing.length === 8 ? `${existing.slice(0,4)}-${existing.slice(4,6)}-${existing.slice(6,8)}` : existing;
           return `<div style="display:flex;gap:12px;font-size:13px;padding:4px 0;align-items:center">
-            <span style="color:#276749;min-width:110px;font-weight:600">${k}</span>
-            <input type="date" data-ref-key="${k}" data-ref-type="date" value="${iso}"
-              style="padding:4px 7px;border:1px solid #9ae6b4;border-radius:5px;font-size:13px;background:#fff"/>
+            <label style="min-width:110px;font-weight:600;color:#744210;flex-shrink:0">${colName}</label>
+            <input type="date" data-capture-key="${colName}" data-capture-type="date" value="${iso}"
+              style="padding:4px 7px;border:1px solid #fbd38d;border-radius:5px;font-size:13px;background:#fff"/>
           </div>`;
         } else if (colType === 'number') {
           return `<div style="display:flex;gap:12px;font-size:13px;padding:4px 0;align-items:center">
-            <span style="color:#276749;min-width:110px;font-weight:600">${k}</span>
-            <input type="number" data-ref-key="${k}" data-ref-type="number" value="${v}"
-              style="padding:4px 7px;border:1px solid #9ae6b4;border-radius:5px;font-size:13px;background:#fff;width:120px"/>
+            <label style="min-width:110px;font-weight:600;color:#744210;flex-shrink:0">${colName}</label>
+            <input type="number" data-capture-key="${colName}" value="${existing}" placeholder="0"
+              style="padding:4px 7px;border:1px solid #fbd38d;border-radius:5px;font-size:13px;background:#fff;width:120px"/>
           </div>`;
         } else {
           return `<div style="display:flex;gap:12px;font-size:13px;padding:4px 0;align-items:center">
-            <span style="color:#276749;min-width:110px;font-weight:600">${k}</span>
-            <input type="text" data-ref-key="${k}" data-ref-type="text" value="${v}"
-              style="padding:4px 7px;border:1px solid #9ae6b4;border-radius:5px;font-size:13px;background:#fff"/>
+            <label style="min-width:110px;font-weight:600;color:#744210;flex-shrink:0">${colName}</label>
+            <input type="text" data-capture-key="${colName}" value="${existing}" placeholder="Enter ${colName}…"
+              style="padding:4px 7px;border:1px solid #fbd38d;border-radius:5px;font-size:13px;background:#fff;flex:1"/>
           </div>`;
         }
       }).join('')}
-    </div>` : (loc.instructions ? `<div style="padding:10px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:13px;margin-bottom:14px;color:#276749">${loc.instructions}</div>` : '');
+    </div>` : '';
   const fieldsHtml = captureFields.length ? `
     <div style="font-size:13px;font-weight:600;margin:12px 0 8px">Fill in</div>
     <form id="loc-capture-form">${renderFieldInputs(captureFields, loc.capturedData||{})}</form>` : '';
@@ -3858,6 +4390,7 @@ function openMarkLocationDoneModal(jobId, locId) {
     </div>
     <div class="modal-body">
       ${refHtml}
+      ${captureColsHtml}
       ${fieldsHtml}
       <div class="form-group" style="margin-top:12px"><label>Notes <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
         <textarea id="loc-done-notes" rows="2" placeholder="Any observations, issues found, etc." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:13px;resize:vertical"></textarea>
@@ -3883,20 +4416,19 @@ async function submitMarkLocationDone(jobId, locId) {
   const captureFields = (job?.csvCaptureFields && job.csvCaptureFields.length) ? job.csvCaptureFields : getJobFields(job?.jobTypeId);
   const captureForm = document.getElementById('loc-capture-form');
   const capturedData = captureForm ? collectFields(captureForm, captureFields) : {};
-  // Collect any edited reference data values
-  const updatedRefData = {};
-  document.querySelectorAll('[data-ref-key]').forEach(inp => {
-    const key = inp.dataset.refKey;
+  // Collect admin-defined capture column values and merge into capturedData
+  document.querySelectorAll('[data-capture-key]').forEach(inp => {
+    const key = inp.dataset.captureKey;
     let val = inp.value.trim();
-    if (inp.dataset.refType === 'date' && val) val = val.replace(/-/g, '');
-    updatedRefData[key] = val;
+    if (inp.dataset.captureType === 'date' && val) val = val.replace(/-/g, '');
+    capturedData[key] = val;
   });
   const assocNotes = document.getElementById('loc-done-notes')?.value || '';
   const btn = document.getElementById('loc-done-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
   try {
     const result = await apiFetch(`/api/jobs/${jobId}/locations/${locId}/done`, {
-      method: 'PUT', body: JSON.stringify({ assocNotes, capturedData, updatedRefData }),
+      method: 'PUT', body: JSON.stringify({ assocNotes, capturedData }),
     });
     delete _pendingPhotos[`${jobId}_${locId}`];
     document.querySelector('.modal-overlay')?.remove();
@@ -3904,6 +4436,22 @@ async function submitMarkLocationDone(jobId, locId) {
     renderView();
     if (result.allDone) toast('All locations done — job submitted for manager review');
     else toast('Location marked done');
+
+    // Offer Logiwa movement if integration is configured
+    try {
+      const lgwStatus = await apiFetch('/api/logiwa/status').catch(()=>null);
+      if (lgwStatus?.ok) {
+        const job = state.data.jobs.find(j => j.id === jobId);
+        const loc = (job?.locations || []).find(l => l.id === locId);
+        const sku = loc?.referenceData?.['Kit SKU'] || loc?.name || '';
+        // Show Logiwa option as a non-blocking toast action
+        const toastEl = document.createElement('div');
+        toastEl.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a56db;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:500;z-index:10000;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.2)';
+        toastEl.innerHTML = `<span>📦 Post to Logiwa?</span><button onclick="openLogiwaMovementModal('${jobId}','${locId}','${sku.replace(/'/g,'')}');this.closest('div').remove()" style="background:#fff;color:#1a56db;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">Open</button><button onclick="this.closest('div').remove()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:16px">✕</button>`;
+        document.body.appendChild(toastEl);
+        setTimeout(()=>toastEl.remove(), 8000);
+      }
+    } catch {}
   } catch(err) {
     toast('Error: ' + err.message, 3000);
     btn.disabled = false; btn.textContent = 'Mark as Done';
@@ -4551,6 +5099,7 @@ function exportJobsExcel(btn) {
 Object.assign(window, {
   openJobModal, openCompleteModal, submitComplete, assignAssociate,
   openSubmitReviewModal, submitForReview, openReviewCompleteModal, submitReviewComplete,
+  openMyWorkSubmitModal, submitMyWork, renderAssocSubmissions,
   addLocationRow, handleLocationCSV, showAssignLocationsModal, submitAssignLocations,
   filterAssignLocs, toggleAssignSelectAll, updateSelectAllState, bulkAssignApply,
   openMarkLocationDoneModal, submitMarkLocationDone, handleLocationPhotoSelect, editDoneTask,
@@ -4570,7 +5119,9 @@ Object.assign(window, {
   showEditUserModal, submitEditUser, getPasswordResetLink,
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
-  showQuickAssignModal, submitQuickAssign,
+  showQuickAssignModal, submitQuickAssign, submitQuickAssignManager,
+  renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync,
+  openLogiwaMovementModal, submitLogiwaMovement,
   openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
   toggleAllCustomers, getCustomerPickerValue,
   loadActivityLog, filterActivityLog,
