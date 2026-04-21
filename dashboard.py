@@ -106,21 +106,22 @@ ON_HOLD_MANUAL_CODES = {
 def fetch_on_hold_codes(queue_df=None) -> set:
     """Return set of order codes tagged ON HOLD in Logiwa.
 
-    Primary strategy: fetch tags for every active queue order by its Logiwa
-    ShipmentOrderId.  Requests run in parallel so even 300 orders finish in
-    ~3–5 s.  This works regardless of order age.
+    Strategy 1 — batch ID filter: POST the full list of queue ShipmentOrderIds
+      to the list endpoint.  If Logiwa filters by Ids/Codes in the body, we get
+      tags for every active order in 1–2 requests regardless of order age.
 
-    Fallback: page scan (newest-first, hits only recent ~5 000 orders).
+    Strategy 2 — page scan fallback: scan newest-first at 200/page within the
+      LOGIWA_MAX_SCAN_SECS wall-clock budget.
 
-    Results are also merged with ON_HOLD_CODES env var override.
+    Results merged with ON_HOLD_CODES env var override.
     """
     import ssl, urllib.request as _ur, json as _json, time as _time
-    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
 
     on_hold = set(ON_HOLD_MANUAL_CODES)
     if on_hold:
         logger.info(f"  ON HOLD env-var override: {len(on_hold)} codes")
 
+    hdrs_json = {}   # set after auth
     ctx = ssl.create_default_context()
     try:
         t0 = _time.monotonic()
@@ -132,11 +133,11 @@ def fetch_on_hold_codes(queue_df=None) -> set:
         with _ur.urlopen(auth_req, timeout=15, context=ctx) as r:
             token = _json.loads(r.read())["token"]
 
-        hdrs = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        hdrs_get  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        hdrs_json = {"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json", "Accept": "application/json"}
 
-        # ── Strategy 1: per-order ID lookup ──────────────────────────────────
-        # We already have every active order's Logiwa internal ID from Snowflake.
-        # Look them up directly — this finds any order regardless of age.
+        # ── Build id→code map from queue ─────────────────────────────────────
         id_to_code: dict = {}
         if queue_df is not None and not queue_df.empty:
             df_q = queue_df.copy()
@@ -152,70 +153,89 @@ def fetch_on_hold_codes(queue_df=None) -> set:
                         )
                     except (ValueError, TypeError):
                         pass
+        logger.info(f"  ON HOLD lookup: {len(id_to_code)} unique queue orders")
 
+        # ── Strategy 1: batch filter via POST body ────────────────────────────
+        # Try several body field names that Logiwa might support for filtering
+        # the list endpoint by specific order IDs or codes.
         if id_to_code:
-            # Probe the first order to discover the working detail endpoint
-            first_id = next(iter(id_to_code))
-            detail_tpl = None
-            for candidate in [
-                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/detail/i/{first_id}",
-                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/i/{first_id}",
-                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/{first_id}",
-            ]:
+            all_ids   = list(id_to_code.keys())
+            all_codes = list(id_to_code.values())
+            batch_url = f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/0/s/200"
+            batch_bodies = [
+                {"Ids":                 all_ids},
+                {"ShipmentOrderIds":    all_ids},
+                {"Codes":               all_codes},
+                {"ShipmentOrderCodes":  all_codes},
+            ]
+            for body in batch_bodies:
+                field = list(body.keys())[0]
                 try:
-                    req = _ur.Request(candidate, headers=hdrs)
-                    with _ur.urlopen(req, timeout=8, context=ctx) as r:
+                    req = _ur.Request(batch_url,
+                                      data=_json.dumps(body).encode(),
+                                      headers=hdrs_json)
+                    with _ur.urlopen(req, timeout=15, context=ctx) as r:
                         resp = _json.loads(r.read())
-                    order = resp.get("data", resp) if isinstance(resp, dict) else {}
-                    if isinstance(order, dict) and ("tags" in order or "code" in order):
-                        detail_tpl = candidate.replace(str(first_id), "{id}")
-                        logger.info(f"  Logiwa per-order endpoint: {detail_tpl}")
-                        if ON_HOLD_TAG in [
-                            t.get("name", "").upper() for t in order.get("tags", [])
-                        ]:
-                            on_hold.add(id_to_code[first_id])
-                        break
-                except Exception as ex:
-                    logger.debug(f"  Logiwa detail probe {candidate}: {ex}")
-
-            if detail_tpl:
-                remaining = [(oid, code) for oid, code in id_to_code.items()
-                             if oid != first_id]
-                budget = max(5.0, LOGIWA_MAX_SCAN_SECS - (_time.monotonic() - t0))
-
-                def _check_order(oid, code):   # noqa: inner func
-                    url = detail_tpl.format(id=oid)
-                    req = _ur.Request(url, headers=hdrs)
-                    with _ur.urlopen(req, timeout=8, context=ctx) as r:
-                        resp = _json.loads(r.read())
-                    order = resp.get("data", resp) if isinstance(resp, dict) else {}
-                    tags = [t.get("name", "").upper() for t in order.get("tags", [])]
-                    return ON_HOLD_TAG in tags
-
-                found_api: set = set()
-                with ThreadPoolExecutor(max_workers=15) as pool:
-                    fmap = {pool.submit(_check_order, oid, code): (oid, code)
-                            for oid, code in remaining}
-                    try:
-                        for fut in _as_completed(fmap, timeout=budget):
-                            oid, code = fmap[fut]
-                            try:
-                                if fut.result():
+                    rows = resp.get("data", []) if isinstance(resp, dict) else []
+                    # Normalise: some endpoints wrap single item in dict not list
+                    if isinstance(rows, dict):
+                        rows = [rows]
+                    logger.info(
+                        f"  Logiwa batch [{field}]: {len(rows)} rows returned "
+                        f"(sent {len(list(body.values())[0])} ids/codes)"
+                    )
+                    if not rows:
+                        continue
+                    # Check whether response is actually filtered to our set
+                    returned_ids = {
+                        o.get("id") or o.get("Id") or o.get("shipmentOrderId") or o.get("ShipmentOrderId")
+                        for o in rows
+                    } - {None}
+                    our_id_set = set(all_ids)
+                    filter_looks_correct = (
+                        returned_ids and returned_ids.issubset(our_id_set)
+                        or len(rows) < len(list(body.values())[0])
+                    )
+                    logger.info(
+                        f"    returned IDs subset of ours: {returned_ids.issubset(our_id_set) if returned_ids else 'no ids in resp'} | "
+                        f"rows < sent: {len(rows) < len(list(body.values())[0])}"
+                    )
+                    if filter_looks_correct:
+                        # Collect ON HOLD from this batch; paginate if needed
+                        logger.info(f"  ✓ Batch filter works with [{field}], scanning all pages")
+                        for o in rows:
+                            tags = [t.get("name", "").upper() for t in o.get("tags", [])]
+                            if ON_HOLD_TAG in tags:
+                                code = str(o.get("code") or o.get("Code") or "").upper()
+                                if code:
                                     on_hold.add(code)
-                                    found_api.add(code)
-                            except Exception:
-                                pass
-                    except Exception:
-                        logger.warning("  Logiwa per-order lookup: time budget reached")
+                        # Paginate for large queues
+                        page = 1
+                        while len(rows) == 200 and (_time.monotonic() - t0) < LOGIWA_MAX_SCAN_SECS:
+                            page_url = f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/200"
+                            req = _ur.Request(page_url,
+                                              data=_json.dumps(body).encode(),
+                                              headers=hdrs_json)
+                            with _ur.urlopen(req, timeout=15, context=ctx) as r:
+                                resp = _json.loads(r.read())
+                            rows = resp.get("data", []) if isinstance(resp, dict) else []
+                            if isinstance(rows, dict):
+                                rows = [rows]
+                            for o in rows:
+                                tags = [t.get("name", "").upper() for t in o.get("tags", [])]
+                                if ON_HOLD_TAG in tags:
+                                    code = str(o.get("code") or o.get("Code") or "").upper()
+                                    if code:
+                                        on_hold.add(code)
+                            page += 1
+                        found = on_hold - ON_HOLD_MANUAL_CODES
+                        logger.info(f"Logiwa ON HOLD: {len(found)} via batch filter, {len(on_hold)} total")
+                        return on_hold
+                except Exception as ex:
+                    logger.info(f"  Logiwa batch [{field}] failed: {ex}")
 
-                logger.info(
-                    f"Logiwa ON HOLD: {len(found_api)} found in {len(id_to_code)} "
-                    f"active queue orders via per-ID lookup"
-                )
-                return on_hold
-
-        # ── Strategy 2: page scan fallback ───────────────────────────────────
-        logger.info("  Logiwa: per-order endpoint unavailable, falling back to page scan")
+        # ── Strategy 2: page scan fallback (200/page) ────────────────────────
+        logger.info("  Logiwa: batch filter unavailable, using page scan (200/page)")
         deadline = _time.monotonic() + LOGIWA_MAX_SCAN_SECS
         pages_scanned = 0
         for page in range(LOGIWA_SCAN_PAGES):
@@ -223,8 +243,8 @@ def fetch_on_hold_codes(queue_df=None) -> set:
                 logger.warning(f"  Logiwa page scan: time budget at page {page}")
                 break
             req = _ur.Request(
-                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/50",
-                headers=hdrs
+                f"{LOGIWA_BASE}/v3.1/ShipmentOrder/list/i/{page}/s/200",
+                headers=hdrs_get
             )
             with _ur.urlopen(req, timeout=10, context=ctx) as r:
                 data = _json.loads(r.read()).get("data", [])
