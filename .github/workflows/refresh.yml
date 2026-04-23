@@ -1,8 +1,6 @@
-name: WMS Dashboard Refresh
+﻿name: WMS Dashboard Refresh
 on:
-  schedule:
-    - cron: "*/15 * * * 1-5"
-  workflow_dispatch:
+  workflow_dispatch:  # Railway handles scheduled runs — manual trigger only
 jobs:
   refresh:
     runs-on: ubuntu-latest
