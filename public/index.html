@@ -2850,6 +2850,8 @@ async function loadLogiwaStatus() {
     const syncDiv = document.getElementById('logiwa-sync-divider');
     if (mapSec && s.ok) { mapSec.style.display = ''; renderLogiwaMappings(s.clientMappings || {}); }
     if (syncSec && s.ok) { syncSec.style.display = ''; if (syncDiv) syncDiv.style.display = ''; }
+    // Store client mappings globally for movement modal lookups
+    if (s.clientMappings) state._logiwaClientMappings = s.clientMappings;
     // Show ongoing sync progress if already running
     if (s.ok && s.syncStatus === 'running') {
       const syncStatus = document.getElementById('logiwa-sync-status');
@@ -3024,40 +3026,28 @@ async function loadLogiwaSyncClients() {
 }
 
 // ── Logiwa Movement Modal ────────────────────────────────────────────────────
-async function openLogiwaMovementModal(jobId, locId, defaultSku) {
-  // Try to look up inventory by SKU from cache
-  let items = [];
-  if (defaultSku) {
-    try {
-      const r = await apiFetch(`/api/logiwa/inventory?sku=${encodeURIComponent(defaultSku)}&limit=20`);
-      items = r.items || [];
-    } catch {}
-  }
-
-  const invOptions = items.length
-    ? items.map(i => `<option value="${i.inventoryId}">${i.sku} | ${i.location} | Qty: ${i.totalQty} avail: ${i.availQty}</option>`).join('')
-    : `<option value="">— Enter Inventory ID manually —</option>`;
-
+function openLogiwaMovementModal(jobId, locId, defaultSku) {
   showModal(`
     <div class="modal-header">
       <h2>📦 Post to Logiwa</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
-      ${items.length ? `
+      <div class="form-group">
+        <label>Search SKU</label>
+        <div style="display:flex;gap:8px">
+          <input id="lgw-sku-input" type="text" placeholder="Enter SKU to search" value="${defaultSku||''}" style="flex:1"
+            onkeydown="if(event.key==='Enter')searchLogiwaInventory('${jobId}')"/>
+          <button class="btn btn-primary btn-sm" onclick="searchLogiwaInventory('${jobId}')" id="lgw-search-btn">Search</button>
+        </div>
+        <div id="lgw-search-status" style="font-size:12px;color:var(--text-light);margin-top:4px"></div>
+      </div>
+      <div id="lgw-results-section" style="display:none">
         <div class="form-group">
-          <label>Inventory Record</label>
-          <select id="lgw-inv-sel" style="width:100%">
-            ${invOptions}
-          </select>
-        </div>` : `
-        <div class="form-group">
-          <label>Logiwa Inventory ID <span style="color:var(--text-light);font-weight:400">(UUID from Logiwa)</span></label>
-          <input id="lgw-inv-manual" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value=""/>
-          <div style="font-size:12px;color:var(--text-light);margin-top:4px">
-            ${defaultSku ? `SKU "${defaultSku}" not found in cache. Run a Logiwa sync first, or enter the ID manually.` : 'Run Logiwa sync to enable SKU lookup.'}
-          </div>
-        </div>`}
+          <label>Select Inventory Record</label>
+          <select id="lgw-inv-sel" style="width:100%"></select>
+        </div>
+      </div>
       <div class="form-row">
         <div class="form-group">
           <label>Movement Type</label>
@@ -3082,6 +3072,50 @@ async function openLogiwaMovementModal(jobId, locId, defaultSku) {
       <button class="btn btn-primary" onclick="submitLogiwaMovement('${jobId}','${locId||''}')">Post to Logiwa</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
+
+  // Auto-search if SKU provided
+  if (defaultSku) setTimeout(() => searchLogiwaInventory(jobId), 100);
+}
+
+async function searchLogiwaInventory(jobId) {
+  const sku = document.getElementById('lgw-sku-input')?.value?.trim();
+  const statusEl = document.getElementById('lgw-search-status');
+  const resultsSection = document.getElementById('lgw-results-section');
+  const sel = document.getElementById('lgw-inv-sel');
+  const btn = document.getElementById('lgw-search-btn');
+  if (!sku) { if (statusEl) statusEl.textContent = 'Enter a SKU to search'; return; }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Searching…'; }
+  if (statusEl) statusEl.textContent = 'Searching Logiwa…';
+  if (resultsSection) resultsSection.style.display = 'none';
+
+  try {
+    // Get clientId from job's customer mapping if available
+    const job = (state.data.jobs || []).find(j => j.id === jobId);
+    const clientMappings = state._logiwaClientMappings || {};
+    const clientId = job?.customer ? (clientMappings[job.customer] || '') : '';
+
+    const params = new URLSearchParams({ sku });
+    if (clientId) params.set('clientId', clientId);
+    const r = await apiFetch(`/api/logiwa/search?${params}`);
+    const items = r.items || [];
+
+    if (!items.length) {
+      if (statusEl) statusEl.textContent = `No inventory found for "${sku}"`;
+      return;
+    }
+    if (statusEl) statusEl.textContent = `Found ${items.length} record(s)`;
+    if (sel) {
+      sel.innerHTML = items.map(i =>
+        `<option value="${i.inventoryId}">${i.sku} | ${i.location || 'No location'} | Avail: ${i.availQty ?? i.totalQty}</option>`
+      ).join('');
+    }
+    if (resultsSection) resultsSection.style.display = '';
+  } catch(err) {
+    if (statusEl) statusEl.textContent = 'Error: ' + err.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Search'; }
+  }
 }
 
 async function submitLogiwaMovement(jobId, locId) {
@@ -5197,7 +5231,7 @@ Object.assign(window, {
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
   showQuickAssignModal, submitQuickAssign, submitQuickAssignManager,
-  renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients, resetLogiwaSync,
+  renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients, resetLogiwaSync, searchLogiwaInventory,
   openLogiwaMovementModal, submitLogiwaMovement,
   openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
   toggleAllCustomers, getCustomerPickerValue,

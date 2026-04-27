@@ -105,6 +105,33 @@ async function fetchInventoryPage(token, index, filterClientId) {
   };
 }
 
+// Real-time SKU search — fetch pages until we find matches, stop early
+// Much faster than full sync for movement lookups
+async function searchInventoryBySku(email, password, sku, clientId) {
+  const token = await getToken(email, password);
+  const skuLower = sku.trim().toLowerCase();
+  const matches = [];
+  const MAX_SEARCH_PAGES = 20; // search up to 10k items max
+
+  for (let i = 0; i < MAX_SEARCH_PAGES; i++) {
+    const path = clientId
+      ? `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}?clientIdentifier=${clientId}`
+      : `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}`;
+    const r = await _request('GET', path, null, token);
+    if (!r.body?.data || r.body.data.length === 0) break;
+
+    const pageMatches = r.body.data
+      .filter(x => x.productSku && x.productSku.toLowerCase().includes(skuLower))
+      .map(_mapItem);
+    matches.push(...pageMatches);
+
+    if (r.body.data.length < INV_PAGE_SIZE) break; // last page
+    if (matches.length >= 50) break; // enough results
+    await new Promise(r => setTimeout(r, 300)); // lighter delay for search
+  }
+  return matches;
+}
+
 // Fetch all inventory pages in parallel batches of CONCURRENCY
 async function fetchAllInventory(email, password, onProgress, filterClientId) {
   const token = await getToken(email, password);

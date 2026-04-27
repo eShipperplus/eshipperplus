@@ -2163,15 +2163,29 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
   }
 });
 
-// GET /api/logiwa/inventory — search cached inventory by SKU and/or clientId
+// GET /api/logiwa/search — real-time SKU search directly against Logiwa API (no cache needed)
+app.get('/api/logiwa/search', requireAuth, async (req, res) => {
+  try {
+    const { sku, clientId } = req.query;
+    if (!sku) return res.status(400).json({ error: 'sku is required' });
+    const creds = await getLogiwaCreds(false);
+    if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
+    const items = await logiwa.searchInventoryBySku(creds.email, creds.password, sku, clientId || null);
+    res.json({ items, count: items.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/logiwa/inventory — search cached inventory by SKU and/or clientId (fallback if synced)
 app.get('/api/logiwa/inventory', requireAuth, async (req, res) => {
   try {
     const { sku, clientId, limit: lim = '50' } = req.query;
     let query = db.collection('wh_logiwa_inventory');
-    if (sku) query = query.where('sku', '==', sku.trim());
     if (clientId) query = query.where('clientId', '==', clientId.trim());
     const snap = await query.limit(parseInt(lim) || 50).get();
-    const items = snap.docs.map(d => d.data());
+    let items = snap.docs.map(d => d.data());
+    if (sku) items = items.filter(x => x.sku && x.sku.toLowerCase().includes(sku.toLowerCase()));
     res.json({ items, count: items.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
