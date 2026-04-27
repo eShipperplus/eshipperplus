@@ -2213,7 +2213,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
 
     let result;
-    const jobNote = `${note||''} [Job:${jobId||''}${locId?`/Loc:${locId}`:''}]`.trim();
+    const jobNote = `${note||''} [By:${req.user.displayName||req.user.email}] [Job:${jobId||''}${locId?`/Loc:${locId}`:''}]`.trim();
     if (type === 'add')         result = await logiwa.addInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'remove') result = await logiwa.removeInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'adjust') result = await logiwa.adjustInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
@@ -2229,6 +2229,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
         // Do NOT send sourceWarehouseLocationCode when identifier is present (Logiwa rejects both)
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
+        note: jobNote,
       };
       console.log('[Logiwa transfer payload]', JSON.stringify(transferPayload, null, 2));
       result = await logiwa.transferProduct(creds.email, creds.password, transferPayload);
