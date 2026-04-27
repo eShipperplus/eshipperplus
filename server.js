@@ -29,6 +29,23 @@ const db = getFirestore();
 const auth = getAuth();
 const bucket = getStorage().bucket();
 
+// ─── Email Helper ─────────────────────────────────────────────────────────────
+const _mailer = (process.env.SMTP_USER && process.env.SMTP_PASS)
+  ? nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } })
+  : null;
+
+async function sendEmail(to, subject, html) {
+  if (!_mailer) return;
+  try { await _mailer.sendMail({ from: `eShipper+ Warehouse <${process.env.SMTP_USER}>`, to, subject, html }); }
+  catch (e) { console.error('[Email error]', e.message); }
+}
+
+async function notifyOfficeSupport(subject, html) {
+  const snap = await db.collection('users').where('role', '==', 'office_support').get();
+  const emails = snap.docs.map(d => d.data().email).filter(Boolean);
+  if (emails.length) await sendEmail(emails.join(','), subject, html);
+}
+
 // ─── Express Setup ────────────────────────────────────────────────────────────
 const app = express();
 app.use(helmet({ contentSecurityPolicy: false })); // CSP handled separately for SPA
@@ -64,8 +81,8 @@ app.use(express.json({ limit: '8mb' }));  // photos are base64 encoded, need hea
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const ROLES = ['admin', 'manager', 'associate', 'office_support'];
-const STATUSES = ['created', 'assigned_manager', 'assigned_associate', 'in_progress', 'pending_review', 'completed', 'cancelled'];
+const ROLES = ['admin', 'manager', 'associate', 'office_support', 'tech'];
+const STATUSES = ['created', 'assigned_manager', 'assigned_associate', 'in_progress', 'pending_review', 'pending_tech_review', 'completed', 'cancelled'];
 
 const JOB_TYPE_DEFS = {
   bts: {
@@ -770,6 +787,47 @@ app.put('/api/jobs/:id/assign-manager', requireAuth, requireRole('manager', 'adm
   }
 });
 
+app.put('/api/jobs/:id/assign-tech', requireAuth, requireRole('admin', 'office_support'), async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const { techId } = req.body;
+    if (!techId) return res.status(400).json({ error: 'techId required' });
+    const [jobSnap, techSnap] = await Promise.all([
+      db.collection('wh_jobs').doc(req.params.id).get(),
+      db.collection('wh_users').doc(techId).get(),
+    ]);
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    if (!techSnap.exists) return res.status(404).json({ error: 'Tech user not found' });
+    if (!['tech', 'admin'].includes(techSnap.data().role)) return res.status(400).json({ error: 'User is not a tech' });
+    const before = jobSnap.data();
+    const update = {
+      assignedTechId: techId,
+      assignedTechName: techSnap.data().displayName,
+      updatedBy: uid, updatedByName: user.displayName, updatedAt: Timestamp.now(),
+    };
+    await db.collection('wh_jobs').doc(req.params.id).update(update);
+    await writeAudit(req.params.id, 'assigned_tech', uid, user.displayName, before, update, user.email);
+    await writeLog({ action: 'job.tech_assigned', entity: 'job', entityId: req.params.id,
+      entityLabel: `${before.jobNumber || req.params.id} · ${before.customerId}`,
+      uid, name: user.displayName, email: user.email, role: user.role,
+      metadata: { assignedTech: techSnap.data().displayName } });
+    // Email the assigned tech
+    const techEmail = techSnap.data().email;
+    if (techEmail) {
+      await sendEmail(techEmail,
+        `[eShipper+] Job ${before.jobNumber || req.params.id} assigned to you for tech review`,
+        `<div style="font-family:sans-serif;max-width:600px">
+          <h2 style="color:#4f46e5">Job Assigned for Tech Review</h2>
+          <p>Job <strong>${before.jobNumber || req.params.id}</strong> (${before.customerId}) has been assigned to you for tech review and Logiwa update.</p>
+          <p>Assigned by: ${user.displayName}</p>
+          <p>Please log in to the warehouse app to complete the review.</p>
+        </div>`
+      ).catch(() => {});
+    }
+    res.json({ id: req.params.id, ...before, ...update });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'admin'), async (req, res) => {
   try {
     const { user, uid } = req;
@@ -1120,10 +1178,11 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
 
     const job = jobSnap.data();
 
-    // Permission: admin, manager, or assigned associate
+    // Permission: admin, manager, tech (from pending_tech_review), or assigned associate
     const canComplete =
       user.role === 'admin' ||
       user.role === 'manager' ||
+      (user.role === 'tech' && job.status === 'pending_tech_review') ||
       (job.assignedAssocId || []).includes(uid) ||
       job.createdBy === uid;
 
@@ -1140,13 +1199,52 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
 
     const { fields, billable, managerNotes } = req.body;
     const mergedFields = { ...job.fields, ...(fields || {}) };
+    const now = Timestamp.now();
+
+    // Check if job type requires tech review (and current user isn't tech/admin completing it)
+    if (!['tech', 'admin'].includes(user.role)) {
+      const jtDoc = await db.collection('wh_config').doc('jobTypes').get();
+      const allJobTypes = jtDoc.exists ? (jtDoc.data().list || []) : [];
+      const jobType = allJobTypes.find(t => t.id === job.jobTypeId);
+      if (jobType?.techReviewRequired) {
+        const update = {
+          fields: mergedFields,
+          managerNotes: managerNotes || job.managerNotes || '',
+          status: 'pending_tech_review',
+          techReviewRequestedAt: now,
+          techReviewRequestedBy: uid,
+          techReviewRequestedByName: user.displayName,
+          updatedBy: uid, updatedByName: user.displayName, updatedAt: now,
+        };
+        await db.collection('wh_jobs').doc(req.params.id).update(update);
+        await writeAudit(req.params.id, 'pending_tech_review', uid, user.displayName, job, update, user.email);
+        await writeLog({ action: 'job.pending_tech_review', entity: 'job', entityId: req.params.id,
+          entityLabel: `${job.jobNumber || req.params.id} · ${job.customerId}`,
+          uid, name: user.displayName, email: user.email, role: user.role });
+        // Email office support
+        await notifyOfficeSupport(
+          `[eShipper+] Job ${job.jobNumber || req.params.id} ready for tech review`,
+          `<div style="font-family:sans-serif;max-width:600px">
+            <h2 style="color:#4f46e5">Job Ready for Tech Review</h2>
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:6px 0;color:#666">Job</td><td><strong>${job.jobNumber || req.params.id}</strong></td></tr>
+              <tr><td style="padding:6px 0;color:#666">Customer</td><td>${job.customerId}</td></tr>
+              <tr><td style="padding:6px 0;color:#666">Job Type</td><td>${jobType.name}</td></tr>
+              <tr><td style="padding:6px 0;color:#666">Approved by</td><td>${user.displayName}</td></tr>
+              ${managerNotes ? `<tr><td style="padding:6px 0;color:#666">Notes</td><td>${managerNotes}</td></tr>` : ''}
+            </table>
+            <p style="margin-top:16px">Please assign this job to the tech team in the warehouse app.</p>
+          </div>`
+        );
+        return res.json({ id: req.params.id, status: 'pending_tech_review', techReviewRequired: true });
+      }
+    }
 
     const { revenue, cost, profit, marginPct, rating } = await calculateRevenueCost(
       { ...job, assignedAssocId: job.assignedAssocId || [] },
       mergedFields
     );
 
-    const now = Timestamp.now();
     const update = {
       fields: mergedFields,
       billable: (user.role === 'admin' && billable !== undefined) ? billable : job.billable,
@@ -2028,7 +2126,7 @@ async function getLogiwaCreds(requireEnabled = true) {
 }
 
 // GET /api/logiwa/status — check if configured & test connection
-app.get('/api/logiwa/status', requireAuth, requireRole('admin', 'manager', 'office_support'), async (req, res) => {
+app.get('/api/logiwa/status', requireAuth, requireRole('admin', 'manager', 'office_support', 'tech'), async (req, res) => {
   try {
     const creds = await getLogiwaCreds(false); // show status even if not enabled
     if (!creds) return res.json({ configured: false });
@@ -2050,6 +2148,37 @@ app.get('/api/logiwa/status', requireAuth, requireRole('admin', 'manager', 'offi
   } catch (err) {
     res.json({ configured: true, ok: false, error: err.message });
   }
+});
+
+// PUT /api/logiwa/change-attributes — update lot/expiry/production date on inventory records
+app.put('/api/logiwa/change-attributes', requireAuth, requireRole('admin', 'manager', 'tech'), async (req, res) => {
+  try {
+    const { inventoryIds, clientId, lotBatchNumber, expiryDate, productionDate } = req.body;
+    if (!inventoryIds?.length) return res.status(400).json({ error: 'inventoryIds required' });
+    const creds = await getLogiwaCreds();
+    if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
+    const payload = {
+      identifiers: inventoryIds,
+      clientIdentifier: clientId || undefined,
+      ...(lotBatchNumber != null ? { lotBatchNumber: { value: lotBatchNumber } } : {}),
+      ...(expiryDate != null ? { expiryDate: { value: expiryDate } } : {}),
+      ...(productionDate != null ? { productionDate: { value: productionDate } } : {}),
+    };
+    const r = await logiwa.changeInventoryAttributes(creds.email, creds.password, payload);
+    if (r.status >= 400) return res.status(r.status).json({ error: JSON.stringify(r.body) });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/logiwa/product-update — update dims/weights/barcodes on a product record
+app.put('/api/logiwa/product-update', requireAuth, requireRole('admin', 'manager', 'tech'), async (req, res) => {
+  try {
+    const creds = await getLogiwaCreds();
+    if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
+    const r = await logiwa.updateProduct(creds.email, creds.password, req.body);
+    if (r.status >= 400) return res.status(r.status).json({ error: JSON.stringify(r.body) });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // GET /api/logiwa/active — lightweight ok check for all authenticated users (worker toast)
@@ -2208,7 +2337,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
   try {
     const { type, inventoryId, quantity, note, jobId, locId, targetLocationCode } = req.body;
     if (!type || !inventoryId || !quantity) return res.status(400).json({ error: 'type, inventoryId, quantity required' });
-    // Associates can only post transfers
+    // Associates can only post transfers; tech/manager/admin can do all types
     if (req.user.role === 'associate' && type !== 'transfer') return res.status(403).json({ error: 'Associates can only post transfer movements' });
 
     const creds = await getLogiwaCreds();

@@ -66,6 +66,7 @@ tr:hover td { background: #f0f4ff; }
 .badge-assigned_manager { background:#bee3f8; color:#2b6cb0; }
 .badge-assigned_associate { background:#feebc8; color:#c05621; }
 .badge-pending_review { background:#fed7e2; color:#97266d; }
+.badge-pending_tech_review { background:#fbd38d; color:#c05621; }
 .badge-in_progress { background:#fefcbf; color:#744210; }
 .badge-completed { background:#c6f6d5; color:#276749; }
 .badge-great { background:#c6f6d5; color:#276749; }
@@ -612,6 +613,11 @@ const NAV_ITEMS = {
     { id: 'jobtypes',     label: 'Job Types',     icon: '🔧' },
     { id: 'activity-log', label: 'Activity Log',  icon: '📜' },
   ],
+  tech: [
+    { id: 'my-jobs', label: 'My Jobs', icon: '📋', group: 'Operations' },
+    { id: 'jobs',    label: 'All Jobs', icon: '📦' },
+    { id: 'integrations', label: 'Integrations', icon: '🔌' },
+  ],
 };
 
 function renderNav() {
@@ -945,7 +951,7 @@ function renderDashboard() {
       </div>
     </div>
     <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
-      ${['created','assigned_manager','assigned_associate','in_progress','pending_review','completed'].map(s=>`
+      ${['created','assigned_manager','assigned_associate','in_progress','pending_review','pending_tech_review','completed'].map(s=>`
         <div class="kpi"><div class="val" style="font-size:20px">${statusCounts[s]||0}</div><div class="lbl">${s.replace(/_/g,' ')}</div></div>
       `).join('')}
     </div>
@@ -1184,7 +1190,7 @@ function renderAllJobs() {
       <div class="filter-row">
         <div class="form-group" style="min-width:130px"><label>Status</label>
           <select id="jf-status"><option value="">All Statuses</option>
-            ${['created','assigned_manager','assigned_associate','in_progress','pending_review','completed','cancelled'].map(s=>`<option value="${s}">${s.replace(/_/g,' ')}</option>`).join('')}
+            ${['created','assigned_manager','assigned_associate','in_progress','pending_review','pending_tech_review','completed','cancelled'].map(s=>`<option value="${s}">${s.replace(/_/g,' ')}</option>`).join('')}
           </select>
         </div>
         <div class="form-group" style="min-width:140px"><label>Customer</label>
@@ -1365,7 +1371,7 @@ async function submitQuickAssign(jobId) {
 function renderMyJobs() {
   const uid = state.user.uid;
   const jobs = state.data.jobs.filter(j =>
-    j.createdBy === uid || (j.assignedAssocId||[]).includes(uid) || j.assignedManagerId === uid
+    j.createdBy === uid || (j.assignedAssocId||[]).includes(uid) || j.assignedManagerId === uid || j.assignedTechId === uid
   );
   const active = jobs.filter(j => j.status !== 'completed' && j.status !== 'cancelled');
   const done = jobs.filter(j => j.status === 'completed').slice(0, 20);
@@ -1389,6 +1395,11 @@ function renderMyJobs() {
                   return j.status === 'pending_review'
                     ? `<button class="btn btn-primary btn-sm" onclick="openReviewCompleteModal('${j.id}')">Review</button>`
                     : j.status !== 'completed' ? `<button class="btn btn-teal btn-sm" onclick="openCompleteModal('${j.id}')">Complete</button>` : '';
+                }
+                if (role === 'tech') {
+                  return j.status === 'pending_tech_review'
+                    ? `<button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${j.id}')">🔬 Update Logiwa</button><button class="btn btn-teal btn-sm" onclick="submitReviewComplete('${j.id}')">✓ Complete Tech Review</button>`
+                    : '';
                 }
                 // Associate: per-associate submission logic
                 if (!(j.assignedAssocId||[]).includes(uid) && j.createdBy !== uid) return '';
@@ -2503,6 +2514,7 @@ function renderJobTypes() {
           </tbody>
         </table>
         ${jt.logiwa?.enabled ? `<div style="margin-top:8px;font-size:12px;color:#1a56db">📦 Logiwa: <strong>${jt.logiwa.movementType==='remove'?'Remove':jt.logiwa.movementType==='adjust'?'Adjust':'Add'}</strong> movements enabled</div>` : ''}
+        ${jt.techReviewRequired ? `<span class="badge badge-orange" style="font-size:11px">🔬 Tech Review</span>` : ''}
       </div>`).join('')}`;
 }
 
@@ -2546,6 +2558,13 @@ function showAddJobTypeModal() {
           <div style="font-size:12px;color:var(--text-light);margin-top:4px">Workers will see this pre-selected when posting movements. Managers/admins can enable or disable Logiwa per individual job.</div>
         </div>
       </div>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)"/>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">🔬 Tech Review</div>
+      <div class="toggle-row">
+        <label class="toggle"><input type="checkbox" id="jt-tech-review"/><span class="toggle-slider"></span></label>
+        <span style="font-size:13px">Requires tech review before job completion</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-light);margin-top:4px">When enabled, manager approval sends job to tech team for Logiwa data update before final completion</div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="submitNewJobType()">Create</button>
@@ -2644,7 +2663,8 @@ async function submitNewJobType() {
   const logiwaEnabled = document.getElementById('jt-logiwa-enabled')?.checked || false;
   const logiwaType = document.getElementById('jt-logiwa-type')?.value || 'add';
   const logiwa = logiwaEnabled ? { enabled: true, movementType: logiwaType } : { enabled: false };
-  const newType = { id, name, color, fields, logiwa };
+  const techReviewRequired = document.getElementById('jt-tech-review')?.checked || false;
+  const newType = { id, name, color, fields, logiwa, techReviewRequired };
   const newTypes = [...state.data.jobTypes, newType];
   try {
     await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
@@ -2693,6 +2713,13 @@ function showEditJobTypeModal(id) {
           <div style="font-size:12px;color:var(--text-light);margin-top:4px">Workers will see this pre-selected when posting movements. Managers/admins can enable or disable Logiwa per individual job.</div>
         </div>
       </div>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)"/>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">🔬 Tech Review</div>
+      <div class="toggle-row">
+        <label class="toggle"><input type="checkbox" id="jt-tech-review" ${jt.techReviewRequired ? 'checked' : ''}/><span class="toggle-slider"></span></label>
+        <span style="font-size:13px">Requires tech review before job completion</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-light);margin-top:4px">When enabled, manager approval sends job to tech team for Logiwa data update before final completion</div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="submitEditJobType('${id}')">Save</button>
@@ -2713,7 +2740,8 @@ async function submitEditJobType(id) {
   const logiwaEnabled = document.getElementById('jt-logiwa-enabled')?.checked || false;
   const logiwaType = document.getElementById('jt-logiwa-type')?.value || 'add';
   const logiwa = logiwaEnabled ? { enabled: true, movementType: logiwaType } : { enabled: false };
-  const newTypes = state.data.jobTypes.map(t => t.id===id ? { ...t, name, color, fields, logiwa } : t);
+  const techReviewRequired = document.getElementById('jt-tech-review')?.checked || false;
+  const newTypes = state.data.jobTypes.map(t => t.id===id ? { ...t, name, color, fields, logiwa, techReviewRequired } : t);
   try {
     await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
     state.data.jobTypes = newTypes;
@@ -3314,6 +3342,7 @@ async function showInviteUserModal() {
             <option value="associate">Associate</option>
             <option value="manager">Manager</option>
             <option value="office_support">Office Support</option>
+            <option value="tech">Tech</option>
             <option value="admin">Admin</option>
           </select>
         </div>
@@ -3644,6 +3673,19 @@ async function submitCreateJob(e) {
   }
 }
 
+// ── Assign Tech ──
+async function assignTech(jobId) {
+  const sel = document.getElementById(`tech-assign-sel-${jobId}`);
+  const techId = sel?.value;
+  if (!techId) { toast('Select a tech user first'); return; }
+  try {
+    await apiFetch(`/api/jobs/${jobId}/assign-tech`, { method: 'PUT', body: JSON.stringify({ techId }) });
+    toast('Tech assigned');
+    await loadData();
+    renderView();
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
 // ── Job Modal ──
 async function openJobModal(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
@@ -3719,6 +3761,18 @@ async function openJobModal(jobId) {
           : '';
       })()}
       ${job.managerNotes?`<div class="form-group"><label style="color:#2b6cb0">Manager Notes</label><div style="padding:8px;background:#ebf8ff;border:1px solid #bee3f8;border-radius:6px;font-size:13px">${job.managerNotes}</div></div>`:''}
+      ${job.status === 'pending_tech_review' && (state.user.role === 'office_support' || state.user.role === 'admin') ? `
+      <div class="form-group" style="margin-top:12px">
+        <label>🔬 Assign Tech</label>
+        <div style="display:flex;gap:8px">
+          <select id="tech-assign-sel-${job.id}" style="flex:1">
+            <option value="">-- Select tech user --</option>
+            ${(state.data.users||[]).filter(u=>u.role==='tech'||u.role==='admin').map(u=>`<option value="${u.uid}" ${job.assignedTechId===u.uid?'selected':''}>${u.displayName}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="assignTech('${job.id}')">Assign</button>
+        </div>
+        ${job.assignedTechName ? `<div style="font-size:12px;color:var(--text-light);margin-top:4px">Currently assigned: ${job.assignedTechName}</div>` : ''}
+      </div>` : ''}
     </div>
     <div class="modal-footer">
       ${job.status!=='completed' && (state.user.role==='admin'||state.user.role==='manager')?
@@ -3726,6 +3780,10 @@ async function openJobModal(jobId) {
           ? `<button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();openReviewCompleteModal('${job.id}')">Review & Complete</button>`
           : `<button class="btn btn-teal" onclick="this.closest('.modal-overlay').remove();openCompleteModal('${job.id}')">Complete</button>`
         :''}
+      ${job.status === 'pending_tech_review' && (state.user.role === 'tech' || state.user.role === 'admin') ? `
+        <button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${job.id}')">🔬 Update Logiwa Attributes</button>
+        <button class="btn btn-teal btn-sm" onclick="this.closest('.modal-overlay').remove();submitReviewComplete('${job.id}')">✓ Complete Tech Review</button>
+      ` : ''}
       ${(()=>{
         // Associate footer button — mirrors My Jobs logic
         if (state.user.role !== 'associate') return '';
@@ -4973,7 +5031,7 @@ function showEditUserModal(uid) {
       <div class="form-row">
         <div class="form-group"><label>Role</label>
           <select id="eu-role">
-            ${['admin','manager','associate','office_support'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${r.replace('_',' ')}</option>`).join('')}
+            ${['admin','manager','associate','office_support','tech'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${r.replace('_',' ')}</option>`).join('')}
           </select>
         </div>
         <div class="form-group"><label>Hourly Cost ($)</label>
@@ -5308,6 +5366,101 @@ function exportJobsExcel(btn) {
   }
 }
 
+// ── Logiwa Attribute Modal ──
+function openLogiwaAttributeModal(jobId) {
+  showModal(`
+    <div class="modal-header">
+      <h2>🔬 Update Inventory Attributes</h2>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Search SKU</label>
+        <div style="display:flex;gap:8px">
+          <input id="lgw-attr-sku" type="text" placeholder="Enter SKU" style="flex:1" onkeydown="if(event.key==='Enter')searchLogiwaAttrInventory('${jobId}')"/>
+          <button class="btn btn-primary btn-sm" onclick="searchLogiwaAttrInventory('${jobId}')" id="lgw-attr-search-btn">Search</button>
+        </div>
+        <div id="lgw-attr-search-status" style="font-size:12px;color:var(--text-light);margin-top:4px"></div>
+      </div>
+      <div id="lgw-attr-results" style="display:none">
+        <div class="form-group">
+          <label>Select Inventory Record(s)</label>
+          <select id="lgw-attr-inv-sel" style="width:100%" multiple size="4"></select>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px">Hold Ctrl/Cmd to select multiple</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Lot / Batch Number</label>
+          <input id="lgw-attr-lot" type="text" placeholder="e.g. LOT2024-001"/>
+        </div>
+        <div class="form-group">
+          <label>Expiry Date</label>
+          <input id="lgw-attr-expiry" type="date"/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Production Date</label>
+        <input id="lgw-attr-prod-date" type="date"/>
+      </div>
+      <div id="lgw-attr-error" style="color:#dc2626;font-size:13px;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitLogiwaAttributes('${jobId}')">Update Attributes</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    </div>`);
+}
+
+async function searchLogiwaAttrInventory(jobId) {
+  const sku = document.getElementById('lgw-attr-sku')?.value?.trim();
+  const statusEl = document.getElementById('lgw-attr-search-status');
+  const sel = document.getElementById('lgw-attr-inv-sel');
+  const btn = document.getElementById('lgw-attr-search-btn');
+  if (!sku) { if(statusEl) statusEl.textContent = 'Enter a SKU'; return; }
+  if(btn) { btn.disabled=true; btn.textContent='Searching…'; }
+  if(statusEl) statusEl.textContent='Searching Logiwa…';
+  try {
+    const job = (state.data.jobs||[]).find(j=>j.id===jobId);
+    const clientId = job?.customer ? (state._logiwaClientMappings||{})[job.customer]||'' : '';
+    const params = new URLSearchParams({ sku });
+    if(clientId) params.set('clientId', clientId);
+    const r = await apiFetch(`/api/logiwa/search?${params}`);
+    const items = r.items||[];
+    if(!items.length) { if(statusEl) statusEl.textContent=`No records found for "${sku}"`; return; }
+    if(statusEl) statusEl.textContent=`Found ${items.length} record(s) — select which to update`;
+    if(sel) sel.innerHTML = items.map(i=>`<option value="${i.inventoryId}" data-client="${i.clientId}">${i.sku} | ${i.location||'No location'} | Lot: ${i.lotBatch||'—'} | Exp: ${i.expiry||'—'}</option>`).join('');
+    document.getElementById('lgw-attr-results').style.display='';
+  } catch(err) { if(statusEl) statusEl.textContent='Error: '+err.message; }
+  finally { if(btn) { btn.disabled=false; btn.textContent='Search'; } }
+}
+
+async function submitLogiwaAttributes(jobId) {
+  const sel = document.getElementById('lgw-attr-inv-sel');
+  const inventoryIds = sel ? [...sel.selectedOptions].map(o=>o.value) : [];
+  const clientId = sel?.selectedOptions[0]?.dataset?.client || '';
+  const lot = document.getElementById('lgw-attr-lot')?.value?.trim()||null;
+  const expiry = document.getElementById('lgw-attr-expiry')?.value||null;
+  const prodDate = document.getElementById('lgw-attr-prod-date')?.value||null;
+  const errEl = document.getElementById('lgw-attr-error');
+  if(!inventoryIds.length) { if(errEl){errEl.textContent='Select at least one inventory record';errEl.style.display='';} return; }
+  if(!lot && !expiry && !prodDate) { if(errEl){errEl.textContent='Enter at least one attribute to update';errEl.style.display='';} return; }
+  const btn = document.querySelector('.modal-footer .btn-primary');
+  if(btn){btn.disabled=true;btn.textContent='Updating…';}
+  try {
+    await apiFetch('/api/logiwa/change-attributes', { method: 'PUT', body: JSON.stringify({
+      inventoryIds, clientId,
+      lotBatchNumber: lot,
+      expiryDate: expiry ? new Date(expiry).toISOString() : null,
+      productionDate: prodDate ? new Date(prodDate).toISOString() : null,
+    })});
+    document.querySelector('.modal-overlay')?.remove();
+    toast('✓ Inventory attributes updated in Logiwa');
+  } catch(err) {
+    if(errEl){errEl.textContent='Error: '+err.message;errEl.style.display='';}
+    if(btn){btn.disabled=false;btn.textContent='Update Attributes';}
+  }
+}
+
 // Expose to onclick handlers
 Object.assign(window, {
   openJobModal, openCompleteModal, submitComplete, assignAssociate,
@@ -5335,6 +5488,7 @@ Object.assign(window, {
   showQuickAssignModal, submitQuickAssign, submitQuickAssignManager,
   renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients, resetLogiwaSync, searchLogiwaInventory,
   openLogiwaMovementModal, submitLogiwaMovement,
+  assignTech, openLogiwaAttributeModal, searchLogiwaAttrInventory, submitLogiwaAttributes,
   openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
   toggleAllCustomers, getCustomerPickerValue,
   loadActivityLog, filterActivityLog,

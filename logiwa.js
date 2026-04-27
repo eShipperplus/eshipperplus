@@ -211,6 +211,20 @@ async function transferProduct(email, password, payload) {
   return r;
 }
 
+// ── Change inventory attributes (lot/expiry/production date) ───────────────
+async function changeInventoryAttributes(email, password, payload) {
+  const token = await getToken(email, password);
+  const r = await _request('PUT', '/v3.1/Inventory/change-attributes', payload, token);
+  return r;
+}
+
+// ── Update product (dims/weights/barcodes) ─────────────────────────────────
+async function updateProduct(email, password, productData) {
+  const token = await getToken(email, password);
+  const r = await _request('PUT', '/v3.1/Product/update', productData, token);
+  return r;
+}
+
 module.exports = {
   getToken,
   clearTokenCache,
@@ -222,4 +236,6 @@ module.exports = {
   removeInventory,
   adjustInventory,
   transferProduct,
+  changeInventoryAttributes,
+  updateProduct,
 };
