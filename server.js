@@ -2203,10 +2203,10 @@ app.get('/api/logiwa/inventory', requireAuth, async (req, res) => {
 });
 
 // POST /api/logiwa/movement — post an inventory movement to Logiwa
-// body: { type: 'add'|'remove'|'adjust', inventoryId, quantity, note, jobId, locId }
+// body: { type: 'add'|'remove'|'adjust'|'transfer', inventoryId, quantity, note, jobId, locId, targetLocationCode }
 app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
   try {
-    const { type, inventoryId, quantity, note, jobId, locId } = req.body;
+    const { type, inventoryId, quantity, note, jobId, locId, targetLocationCode } = req.body;
     if (!type || !inventoryId || !quantity) return res.status(400).json({ error: 'type, inventoryId, quantity required' });
 
     const creds = await getLogiwaCreds();
@@ -2214,9 +2214,17 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
 
     let result;
     const jobNote = `${note||''} [Job:${jobId||''}${locId?`/Loc:${locId}`:''}]`.trim();
-    if (type === 'add')     result = await logiwa.addInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
+    if (type === 'add')         result = await logiwa.addInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'remove') result = await logiwa.removeInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'adjust') result = await logiwa.adjustInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
+    else if (type === 'transfer') {
+      if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
+      result = await logiwa.transferProduct(creds.email, creds.password, {
+        inventoryIdentifier: inventoryId,
+        targetWarehouseLocationCode: targetLocationCode,
+        quantity,
+      });
+    }
     else return res.status(400).json({ error: 'Invalid type' });
 
     if (result.status >= 400) {
