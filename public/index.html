@@ -3202,8 +3202,9 @@ async function submitLogiwaMovement(jobId, locId) {
     const typeLabel = type === 'transfer' ? `transferred ${quantity} units → ${targetLocationCode}` : `${type} ${quantity} units`;
     toast(`✓ Logiwa: ${typeLabel}`);
   } catch (err) {
-    if (errEl) { errEl.textContent = 'Error: ' + err.message; errEl.style.display = ''; }
+    if (errEl) { errEl.textContent = 'Error: ' + err.message; errEl.style.display = ''; errEl.style.whiteSpace = 'pre-wrap'; }
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Post to Logiwa'; }
+    console.error('[Logiwa movement]', err);
   }
 }
 

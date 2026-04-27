@@ -2228,7 +2228,9 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     else return res.status(400).json({ error: 'Invalid type' });
 
     if (result.status >= 400) {
-      return res.status(result.status).json({ error: result.body?.message || 'Logiwa error', logiwaResponse: result.body });
+      console.error('[Logiwa movement error]', JSON.stringify(result.body, null, 2));
+      const detail = result.body?.errors ? JSON.stringify(result.body.errors) : (result.body?.message || JSON.stringify(result.body));
+      return res.status(result.status).json({ error: detail, logiwaResponse: result.body });
     }
 
     // Record the movement on the job in Firestore
