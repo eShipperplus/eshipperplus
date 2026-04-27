@@ -2502,6 +2502,7 @@ function renderJobTypes() {
           </tr>`).join('')}
           </tbody>
         </table>
+        ${jt.logiwa?.enabled ? `<div style="margin-top:8px;font-size:12px;color:#1a56db">📦 Logiwa: <strong>${jt.logiwa.movementType==='remove'?'Remove':jt.logiwa.movementType==='adjust'?'Adjust':'Add'}</strong> movements enabled</div>` : ''}
       </div>`).join('')}`;
 }
 
@@ -2527,12 +2528,32 @@ function showAddJobTypeModal() {
       <div style="font-weight:600;font-size:13px;margin-bottom:8px">Fields</div>
       <div id="jt-fields-list"></div>
       <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFieldRow()">+ Add Field</button>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)"/>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">📦 Logiwa Integration</div>
+      <div class="toggle-row" style="margin-bottom:12px">
+        <label class="toggle"><input type="checkbox" id="jt-logiwa-enabled"/><span class="toggle-slider"></span></label>
+        <span style="font-size:13px">Enable Logiwa inventory movements for this job type</span>
+      </div>
+      <div id="jt-logiwa-type-row" style="display:none">
+        <div class="form-group">
+          <label>Default Movement Type</label>
+          <select id="jt-logiwa-type">
+            <option value="add">➕ Add (stock received / BTS)</option>
+            <option value="remove">➖ Remove (picked / consumed)</option>
+            <option value="adjust">⚖️ Adjust (set absolute quantity)</option>
+          </select>
+          <div style="font-size:12px;color:var(--text-light);margin-top:4px">Workers will see this pre-selected when posting movements. Managers/admins can enable or disable Logiwa per individual job.</div>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="submitNewJobType()">Create</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
   addFieldRow();
+  setTimeout(() => {
+    document.getElementById('jt-logiwa-enabled').onchange = function(){ document.getElementById('jt-logiwa-type-row').style.display = this.checked ? '' : 'none'; };
+  }, 50);
 }
 
 function addFieldRow(fieldId='', label='', type='text', required=false, options='', showWhen=null) {
@@ -2619,7 +2640,10 @@ async function submitNewJobType() {
   if (state.data.jobTypes.find(t=>t.id===id)) { toast('Job type ID already exists'); return; }
   const color = document.getElementById('jt-color')?.value || 'purple';
   const fields = collectFieldRows();
-  const newType = { id, name, color, fields };
+  const logiwaEnabled = document.getElementById('jt-logiwa-enabled')?.checked || false;
+  const logiwaType = document.getElementById('jt-logiwa-type')?.value || 'add';
+  const logiwa = logiwaEnabled ? { enabled: true, movementType: logiwaType } : { enabled: false };
+  const newType = { id, name, color, fields, logiwa };
   const newTypes = [...state.data.jobTypes, newType];
   try {
     await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
@@ -2650,12 +2674,33 @@ function showEditJobTypeModal(id) {
       <div style="font-weight:600;font-size:13px;margin-bottom:8px">Fields</div>
       <div id="jt-fields-list"></div>
       <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFieldRow()">+ Add Field</button>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)"/>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">📦 Logiwa Integration</div>
+      <div class="toggle-row" style="margin-bottom:12px">
+        <label class="toggle"><input type="checkbox" id="jt-logiwa-enabled" ${jt.logiwa?.enabled ? 'checked' : ''}/><span class="toggle-slider"></span></label>
+        <span style="font-size:13px">Enable Logiwa inventory movements for this job type</span>
+      </div>
+      <div id="jt-logiwa-type-row" style="display:${jt.logiwa?.enabled ? '' : 'none'}">
+        <div class="form-group">
+          <label>Default Movement Type</label>
+          <select id="jt-logiwa-type">
+            <option value="add" ${(jt.logiwa?.movementType||'add')==='add'?'selected':''}>➕ Add (stock received / BTS)</option>
+            <option value="remove" ${(jt.logiwa?.movementType||'add')==='remove'?'selected':''}>➖ Remove (picked / consumed)</option>
+            <option value="adjust" ${(jt.logiwa?.movementType||'add')==='adjust'?'selected':''}>⚖️ Adjust (set absolute quantity)</option>
+          </select>
+          <div style="font-size:12px;color:var(--text-light);margin-top:4px">Workers will see this pre-selected when posting movements. Managers/admins can enable or disable Logiwa per individual job.</div>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="submitEditJobType('${id}')">Save</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
   (jt.fields||[]).forEach(f => addFieldRow(f.id, f.label, f.type||'text', f.required||false, (f.options||[]).join(', '), f.showWhen||null));
+  setTimeout(() => {
+    const el = document.getElementById('jt-logiwa-enabled');
+    if (el) el.onchange = function(){ document.getElementById('jt-logiwa-type-row').style.display = this.checked ? '' : 'none'; };
+  }, 50);
 }
 
 async function submitEditJobType(id) {
@@ -2663,7 +2708,10 @@ async function submitEditJobType(id) {
   if (!name) { toast('Name required'); return; }
   const color = document.getElementById('jt-color')?.value || 'purple';
   const fields = collectFieldRows();
-  const newTypes = state.data.jobTypes.map(t => t.id===id ? { ...t, name, color, fields } : t);
+  const logiwaEnabled = document.getElementById('jt-logiwa-enabled')?.checked || false;
+  const logiwaType = document.getElementById('jt-logiwa-type')?.value || 'add';
+  const logiwa = logiwaEnabled ? { enabled: true, movementType: logiwaType } : { enabled: false };
+  const newTypes = state.data.jobTypes.map(t => t.id===id ? { ...t, name, color, fields, logiwa } : t);
   try {
     await apiFetch('/api/jobtypes', { method: 'PUT', body: JSON.stringify({ list: newTypes }) });
     state.data.jobTypes = newTypes;
@@ -3026,7 +3074,7 @@ async function loadLogiwaSyncClients() {
 }
 
 // ── Logiwa Movement Modal ────────────────────────────────────────────────────
-function openLogiwaMovementModal(jobId, locId, defaultSku) {
+function openLogiwaMovementModal(jobId, locId, defaultSku, defaultMovementType='add') {
   showModal(`
     <div class="modal-header">
       <h2>📦 Post to Logiwa</h2>
@@ -3052,9 +3100,9 @@ function openLogiwaMovementModal(jobId, locId, defaultSku) {
         <div class="form-group">
           <label>Movement Type</label>
           <select id="lgw-type">
-            <option value="add">➕ Add (stock received / BTS)</option>
-            <option value="remove">➖ Remove (picked / consumed)</option>
-            <option value="adjust">⚖️ Adjust (set to quantity)</option>
+            <option value="add" ${defaultMovementType==='add'?'selected':''}>➕ Add (stock received / BTS)</option>
+            <option value="remove" ${defaultMovementType==='remove'?'selected':''}>➖ Remove (picked / consumed)</option>
+            <option value="adjust" ${defaultMovementType==='adjust'?'selected':''}>⚖️ Adjust (set to quantity)</option>
           </select>
         </div>
         <div class="form-group">
@@ -3684,6 +3732,11 @@ async function showEditJobModal(jobId) {
   if (!job) return;
   const fields = getJobFields(job.jobTypeId);
   const managers = (state.data.users||[]).filter(u => u.role==='manager'||u.role==='admin');
+  const role = state.user?.role;
+  const canToggleLogiwa = role === 'admin' || role === 'manager' || role === 'office_support';
+  const jobType = state.data.jobTypes.find(t => t.id === job.jobTypeId);
+  const logiwaEnabledForType = jobType?.logiwa?.enabled || false;
+  const logiwaEnabledForJob = job.logiwaEnabled != null ? job.logiwaEnabled : logiwaEnabledForType;
   showModal(`
     <div class="modal-header"><h2>Edit Job — ${job.customerId}</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
@@ -3726,6 +3779,15 @@ async function showEditJobModal(jobId) {
       <form id="ej-fields-form">
         ${renderFieldInputs(fields, job.fields||{})}
       </form>
+      ${canToggleLogiwa ? `
+      <div class="form-group">
+        <label>📦 Logiwa Movements</label>
+        <div class="toggle-row">
+          <label class="toggle"><input type="checkbox" id="ej-logiwa-enabled" ${logiwaEnabledForJob ? 'checked' : ''}/><span class="toggle-slider"></span></label>
+          <span style="font-size:13px">Enable Logiwa inventory movement prompts for this job</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:4px">${logiwaEnabledForType ? 'Enabled by job type default' : 'Not enabled by job type'}</div>
+      </div>` : ''}
       <div class="form-group" style="margin-top:12px"><label>Notes</label>
         <textarea id="ej-notes" rows="3">${job.notes||''}</textarea></div>
       ${state.user.role==='admin'?`<div class="toggle-row" style="margin-top:8px">
@@ -3754,6 +3816,10 @@ async function submitEditJob(jobId) {
   // Update customer if changed
   const newCustomer = document.getElementById('ej-customer')?.value;
   if (newCustomer && newCustomer !== job.customerId) body.customerId = newCustomer;
+
+  // Collect logiwaEnabled override if toggle is present
+  const logiwaEl = document.getElementById('ej-logiwa-enabled');
+  if (logiwaEl !== null) body.logiwaEnabled = logiwaEl.checked;
 
   // Collect selected associates
   const selectedAssocIds = [...document.querySelectorAll('.ej-assoc-cb:checked')].map(cb => cb.value);
@@ -4037,7 +4103,7 @@ async function openReviewCompleteModal(jobId) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" id="review-complete-btn" onclick="submitReviewComplete('${jobId}')">Approve & Complete</button>
-      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="openLogiwaMovementModal('${jobId}','','')">📦 Post to Logiwa</button>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="openLogiwaMovementModal('${jobId}','','',(state.data.jobTypes.find(t=>t.id===state.data.jobs.find(j=>j.id==='${jobId}')?.jobTypeId)?.logiwa?.movementType||'add'))">📦 Post to Logiwa</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
 }
@@ -4548,19 +4614,25 @@ async function submitMarkLocationDone(jobId, locId) {
     if (result.allDone) toast('All locations done — job submitted for manager review');
     else toast('Location marked done');
 
-    // Offer Logiwa movement if integration is configured
+    // Offer Logiwa movement if integration is configured and enabled for this job
     try {
       const lgwStatus = await apiFetch('/api/logiwa/status').catch(()=>null);
       if (lgwStatus?.ok) {
         const job = state.data.jobs.find(j => j.id === jobId);
-        const loc = (job?.locations || []).find(l => l.id === locId);
-        const sku = loc?.referenceData?.['Kit SKU'] || loc?.name || '';
-        // Show Logiwa option as a non-blocking toast action
-        const toastEl = document.createElement('div');
-        toastEl.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a56db;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:500;z-index:10000;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.2)';
-        toastEl.innerHTML = `<span>📦 Post to Logiwa?</span><button onclick="openLogiwaMovementModal('${jobId}','${locId}','${sku.replace(/'/g,'')}');this.closest('div').remove()" style="background:#fff;color:#1a56db;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">Open</button><button onclick="this.closest('div').remove()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:16px">✕</button>`;
-        document.body.appendChild(toastEl);
-        setTimeout(()=>toastEl.remove(), 8000);
+        const jobType = state.data.jobTypes.find(t => t.id === job?.jobTypeId);
+        const logiwaEnabled = job?.logiwaEnabled != null ? job.logiwaEnabled : (jobType?.logiwa?.enabled || false);
+        if (!logiwaEnabled) { /* Logiwa not enabled for this job — skip toast */ }
+        else {
+          const loc = (job?.locations || []).find(l => l.id === locId);
+          const sku = loc?.referenceData?.['Kit SKU'] || loc?.name || '';
+          const defaultMovementType = jobType?.logiwa?.movementType || 'add';
+          // Show Logiwa option as a non-blocking toast action
+          const toastEl = document.createElement('div');
+          toastEl.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a56db;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:500;z-index:10000;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.2)';
+          toastEl.innerHTML = `<span>📦 Post to Logiwa?</span><button onclick="openLogiwaMovementModal('${jobId}','${locId}','${sku.replace(/'/g,'')}','${defaultMovementType}');this.closest('div').remove()" style="background:#fff;color:#1a56db;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">Open</button><button onclick="this.closest('div').remove()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:16px">✕</button>`;
+          document.body.appendChild(toastEl);
+          setTimeout(()=>toastEl.remove(), 8000);
+        }
       }
     } catch {}
   } catch(err) {
