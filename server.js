@@ -2052,6 +2052,16 @@ app.get('/api/logiwa/status', requireAuth, requireRole('admin', 'manager', 'offi
   }
 });
 
+// GET /api/logiwa/active — lightweight ok check for all authenticated users (worker toast)
+app.get('/api/logiwa/active', requireAuth, async (req, res) => {
+  try {
+    const creds = await getLogiwaCreds(); // requires enabled=true
+    if (!creds) return res.json({ ok: false });
+    const token = await logiwa.getToken(creds.email, creds.password);
+    res.json({ ok: !!token });
+  } catch { res.json({ ok: false }); }
+});
+
 // PUT /api/logiwa/config — save credentials + client mappings (admin only)
 app.put('/api/logiwa/config', requireAuth, requireRole('admin'), async (req, res) => {
   try {

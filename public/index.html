@@ -4616,7 +4616,7 @@ async function submitMarkLocationDone(jobId, locId) {
 
     // Offer Logiwa movement if integration is configured and enabled for this job
     try {
-      const lgwStatus = await apiFetch('/api/logiwa/status').catch(()=>null);
+      const lgwStatus = await apiFetch('/api/logiwa/active').catch(()=>null);
       if (lgwStatus?.ok) {
         const job = state.data.jobs.find(j => j.id === jobId);
         const jobType = state.data.jobTypes.find(t => t.id === job?.jobTypeId);
