@@ -208,6 +208,7 @@ module.exports = {
   listClients,
   fetchAllInventory,
   fetchInventoryPage,
+  searchInventoryBySku,
   addInventory,
   removeInventory,
   adjustInventory,
