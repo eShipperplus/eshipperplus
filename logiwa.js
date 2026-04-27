@@ -105,29 +105,35 @@ async function fetchInventoryPage(token, index, filterClientId) {
   };
 }
 
-// Real-time SKU search — fetch pages until we find matches, stop early
-// Much faster than full sync for movement lookups
+// Real-time SKU search — fetches pages in parallel batches for speed
 async function searchInventoryBySku(email, password, sku, clientId) {
   const token = await getToken(email, password);
   const skuLower = sku.trim().toLowerCase();
   const matches = [];
-  const MAX_SEARCH_PAGES = 20; // search up to 10k items max
+  const MAX_PAGES = 20;   // up to 10k items
+  const CONCURRENCY = 5;  // fetch 5 pages at once
+  let pageIndex = 0;
+  let done = false;
 
-  for (let i = 0; i < MAX_SEARCH_PAGES; i++) {
-    const path = clientId
-      ? `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}?clientIdentifier=${clientId}`
-      : `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}`;
-    const r = await _request('GET', path, null, token);
-    if (!r.body?.data || r.body.data.length === 0) break;
+  while (!done && pageIndex < MAX_PAGES && matches.length < 50) {
+    const indices = [];
+    for (let c = 0; c < CONCURRENCY && pageIndex + c < MAX_PAGES; c++) indices.push(pageIndex + c);
+    pageIndex += indices.length;
 
-    const pageMatches = r.body.data
-      .filter(x => x.productSku && x.productSku.toLowerCase().includes(skuLower))
-      .map(_mapItem);
-    matches.push(...pageMatches);
+    const results = await Promise.all(indices.map(i => {
+      const path = clientId
+        ? `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}?clientIdentifier=${clientId}`
+        : `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}`;
+      return _request('GET', path, null, token);
+    }));
 
-    if (r.body.data.length < INV_PAGE_SIZE) break; // last page
-    if (matches.length >= 50) break; // enough results
-    await new Promise(r => setTimeout(r, 300)); // lighter delay for search
+    for (const r of results) {
+      if (!r.body?.data || r.body.data.length === 0) { done = true; break; }
+      matches.push(...r.body.data
+        .filter(x => x.productSku && x.productSku.toLowerCase().includes(skuLower))
+        .map(_mapItem));
+      if (r.body.data.length < INV_PAGE_SIZE) { done = true; break; }
+    }
   }
   return matches;
 }
