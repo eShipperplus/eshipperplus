@@ -2685,9 +2685,10 @@ function showEditJobTypeModal(id) {
         <div class="form-group">
           <label>Default Movement Type</label>
           <select id="jt-logiwa-type">
-            <option value="add" ${(jt.logiwa?.movementType||'add')==='add'?'selected':''}>➕ Add (stock received / BTS)</option>
+            <option value="add" ${(jt.logiwa?.movementType||'add')==='add'?'selected':''}>➕ Add (new stock in)</option>
             <option value="remove" ${(jt.logiwa?.movementType||'add')==='remove'?'selected':''}>➖ Remove (picked / consumed)</option>
             <option value="adjust" ${(jt.logiwa?.movementType||'add')==='adjust'?'selected':''}>⚖️ Adjust (set absolute quantity)</option>
+            <option value="transfer" ${(jt.logiwa?.movementType||'add')==='transfer'?'selected':''}>🔄 Transfer (move to location)</option>
           </select>
           <div style="font-size:12px;color:var(--text-light);margin-top:4px">Workers will see this pre-selected when posting movements. Managers/admins can enable or disable Logiwa per individual job.</div>
         </div>
