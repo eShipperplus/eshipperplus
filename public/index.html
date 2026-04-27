@@ -4624,7 +4624,10 @@ async function submitMarkLocationDone(jobId, locId) {
         if (!logiwaEnabled) { /* Logiwa not enabled for this job — skip toast */ }
         else {
           const loc = (job?.locations || []).find(l => l.id === locId);
-          const sku = loc?.referenceData?.['Kit SKU'] || loc?.name || '';
+          // Find SKU from referenceData (case-insensitive: 'SKU', 'Kit SKU', etc.)
+          const refData = loc?.referenceData || {};
+          const skuEntry = Object.entries(refData).find(([k]) => /^(kit.?sku|sku)$/i.test(k));
+          const sku = (skuEntry?.[1] || '').trim();
           const defaultMovementType = jobType?.logiwa?.movementType || 'add';
           // Show Logiwa option as a non-blocking toast action
           const toastEl = document.createElement('div');
