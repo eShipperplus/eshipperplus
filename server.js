@@ -2041,8 +2041,11 @@ app.get('/api/logiwa/status', requireAuth, requireRole('admin', 'manager', 'offi
       clientMappings: creds.clientMappings || {},
       lastSync: creds.lastSync || null,
       syncStatus: creds.syncStatus || null,
+      syncPhase: creds.syncPhase || null,
       syncProgress: creds.syncProgress || 0,
+      syncTotal: creds.syncTotal || 0,
       syncCount: creds.syncCount || 0,
+      syncStarted: creds.syncStarted || null,
     });
   } catch (err) {
     res.json({ configured: true, ok: false, error: err.message });
@@ -2076,6 +2079,12 @@ app.get('/api/logiwa/clients', requireAuth, requireRole('admin'), async (req, re
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /api/logiwa/sync/reset — clear stuck syncStatus so user can retry
+app.post('/api/logiwa/sync/reset', requireAuth, requireRole('admin'), async (req, res) => {
+  await db.collection('wh_config').doc('logiwa').update({ syncStatus: null, syncPhase: null, syncProgress: 0 }).catch(() => {});
+  res.json({ ok: true });
 });
 
 // POST /api/logiwa/sync — fetch inventory from Logiwa and cache in Firestore (admin only)

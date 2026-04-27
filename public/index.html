@@ -2854,8 +2854,19 @@ async function loadLogiwaStatus() {
     if (s.ok && s.syncStatus === 'running') {
       const syncStatus = document.getElementById('logiwa-sync-status');
       const syncBtn = document.getElementById('logiwa-sync-btn');
-      if (syncStatus) syncStatus.textContent = `Syncing… ${s.syncProgress || 0} items fetched`;
-      if (syncBtn) { syncBtn.disabled = true; syncBtn.textContent = '⟳ Syncing…'; }
+      // Check if sync is stale (started > 30 min ago)
+      const startedMs = s.syncStarted ? (s.syncStarted._seconds ? s.syncStarted._seconds * 1000 : new Date(s.syncStarted).getTime()) : 0;
+      const isStale = startedMs && (Date.now() - startedMs) > 30 * 60 * 1000;
+      if (isStale) {
+        if (syncStatus) syncStatus.innerHTML = `Sync appears stuck. <a href="#" onclick="resetLogiwaSync();return false" style="color:var(--primary)">Reset</a>`;
+        if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = '⟳ Sync Now'; }
+      } else {
+        const phaseText = s.syncPhase === 'writing'
+          ? `Writing to database… ${s.syncProgress || 0} / ${s.syncTotal || '?'}`
+          : `Fetching from Logiwa… ${s.syncProgress || 0} items`;
+        if (syncStatus) syncStatus.innerHTML = `${phaseText} &nbsp;<a href="#" onclick="resetLogiwaSync();return false" style="color:#999;font-size:12px">cancel</a>`;
+        if (syncBtn) { syncBtn.disabled = true; syncBtn.textContent = '⟳ Syncing…'; }
+      }
     }
 
     // Populate client dropdown for per-client sync (also populates mapping dropdowns)
@@ -2973,6 +2984,17 @@ async function startLogiwaSync() {
       } catch {}
     }, 4000);
   } catch (err) { toast('Error: ' + err.message, 3000); if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Now'; } }
+}
+
+async function resetLogiwaSync() {
+  try {
+    await apiFetch('/api/logiwa/sync/reset', { method: 'POST', body: '{}' });
+    const syncStatus = document.getElementById('logiwa-sync-status');
+    const syncBtn = document.getElementById('logiwa-sync-btn');
+    if (syncStatus) syncStatus.textContent = '';
+    if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = '⟳ Sync Now'; }
+    toast('Sync reset — you can start a new sync');
+  } catch(e) { toast('Reset failed: ' + e.message, 3000); }
 }
 
 async function loadLogiwaSyncClients() {
@@ -5175,7 +5197,7 @@ Object.assign(window, {
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
   showQuickAssignModal, submitQuickAssign, submitQuickAssignManager,
-  renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients,
+  renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients, resetLogiwaSync,
   openLogiwaMovementModal, submitLogiwaMovement,
   openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
   toggleAllCustomers, getCustomerPickerValue,
