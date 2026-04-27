@@ -2226,7 +2226,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
         productIdentifier: productId || undefined,
         packTypeIdentifier: packTypeId || undefined,
         sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
-        sourceWarehouseLocationCode: sourceLocationCode || undefined,
+        // Do NOT send sourceWarehouseLocationCode when identifier is present (Logiwa rejects both)
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
       };
