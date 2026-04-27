@@ -2220,23 +2220,24 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     else if (type === 'transfer') {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
       const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId } = req.body;
-      result = await logiwa.transferProduct(creds.email, creds.password, {
-        clientIdentifier: clientId,
-        sourceWarehouseIdentifier: warehouseId,
-        productIdentifier: productId,
-        packTypeIdentifier: packTypeId,
-        sourceWarehouseLocationIdentifier: sourceLocationId,
-        sourceWarehouseLocationCode: sourceLocationCode,
+      const transferPayload = {
+        clientIdentifier: clientId || undefined,
+        sourceWarehouseIdentifier: warehouseId || undefined,
+        productIdentifier: productId || undefined,
+        packTypeIdentifier: packTypeId || undefined,
+        sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
+        sourceWarehouseLocationCode: sourceLocationCode || undefined,
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
-      });
+      };
+      console.log('[Logiwa transfer payload]', JSON.stringify(transferPayload, null, 2));
+      result = await logiwa.transferProduct(creds.email, creds.password, transferPayload);
     }
     else return res.status(400).json({ error: 'Invalid type' });
 
     if (result.status >= 400) {
       console.error('[Logiwa movement error]', JSON.stringify(result.body, null, 2));
-      const detail = result.body?.errors ? JSON.stringify(result.body.errors) : (result.body?.message || JSON.stringify(result.body));
-      return res.status(result.status).json({ error: detail, logiwaResponse: result.body });
+      return res.status(result.status).json({ error: JSON.stringify(result.body), logiwaResponse: result.body });
     }
 
     // Record the movement on the job in Firestore
