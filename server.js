@@ -2208,6 +2208,8 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
   try {
     const { type, inventoryId, quantity, note, jobId, locId, targetLocationCode } = req.body;
     if (!type || !inventoryId || !quantity) return res.status(400).json({ error: 'type, inventoryId, quantity required' });
+    // Associates can only post transfers
+    if (req.user.role === 'associate' && type !== 'transfer') return res.status(403).json({ error: 'Associates can only post transfer movements' });
 
     const creds = await getLogiwaCreds();
     if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });

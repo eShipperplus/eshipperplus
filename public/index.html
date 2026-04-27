@@ -3102,10 +3102,12 @@ function openLogiwaMovementModal(jobId, locId, defaultSku, defaultMovementType='
         <div class="form-group">
           <label>Movement Type</label>
           <select id="lgw-type" onchange="document.getElementById('lgw-transfer-row').style.display=this.value==='transfer'?'':'none'">
+            ${state.user?.role !== 'associate' ? `
             <option value="add" ${defaultMovementType==='add'?'selected':''}>➕ Add (new stock in)</option>
             <option value="remove" ${defaultMovementType==='remove'?'selected':''}>➖ Remove (picked / consumed)</option>
             <option value="adjust" ${defaultMovementType==='adjust'?'selected':''}>⚖️ Adjust (set to quantity)</option>
-            <option value="transfer" ${defaultMovementType==='transfer'?'selected':''}>🔄 Transfer (move to location)</option>
+            ` : ''}
+            <option value="transfer" ${(defaultMovementType==='transfer'||state.user?.role==='associate')?'selected':''}>🔄 Transfer (move to location)</option>
           </select>
         </div>
         <div class="form-group">
@@ -4648,20 +4650,18 @@ async function submitMarkLocationDone(jobId, locId) {
         const job = state.data.jobs.find(j => j.id === jobId);
         const jobType = state.data.jobTypes.find(t => t.id === job?.jobTypeId);
         const logiwaEnabled = job?.logiwaEnabled != null ? job.logiwaEnabled : (jobType?.logiwa?.enabled || false);
-        if (!logiwaEnabled) { /* Logiwa not enabled for this job — skip toast */ }
+        if (!logiwaEnabled) { /* Logiwa not enabled for this job — skip */ }
         else {
           const loc = (job?.locations || []).find(l => l.id === locId);
           // Find SKU from referenceData (case-insensitive: 'SKU', 'Kit SKU', etc.)
           const refData = loc?.referenceData || {};
           const skuEntry = Object.entries(refData).find(([k]) => /^(kit.?sku|sku)$/i.test(k));
           const sku = (skuEntry?.[1] || '').trim();
-          const defaultMovementType = jobType?.logiwa?.movementType || 'add';
-          // Show Logiwa option as a non-blocking toast action
-          const toastEl = document.createElement('div');
-          toastEl.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a56db;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:500;z-index:10000;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.2)';
-          toastEl.innerHTML = `<span>📦 Post to Logiwa?</span><button onclick="openLogiwaMovementModal('${jobId}','${locId}','${sku.replace(/'/g,'')}','${defaultMovementType}');this.closest('div').remove()" style="background:#fff;color:#1a56db;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">Open</button><button onclick="this.closest('div').remove()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:16px">✕</button>`;
-          document.body.appendChild(toastEl);
-          setTimeout(()=>toastEl.remove(), 8000);
+          // Associates always default to transfer; other roles use job type default
+          const isAssociate = state.user?.role === 'associate';
+          const defaultMovementType = isAssociate ? 'transfer' : (jobType?.logiwa?.movementType || 'add');
+          // Auto-open modal directly — no toast, no extra click
+          openLogiwaMovementModal(jobId, locId, sku, defaultMovementType);
         }
       }
     } catch {}
