@@ -2842,14 +2842,21 @@ async function loadLogiwaStatus() {
     const enabledEl = document.getElementById('logiwa-enabled');
     if (emailEl) emailEl.value = s.email || '';
     if (passEl && s.ok) passEl.value = '••••••••';
-    if (enabledEl) enabledEl.checked = s.configured;
+    if (enabledEl) enabledEl.checked = !!s.enabled;
 
-    // Show mapping and sync sections
+    // Show mapping and sync sections whenever credentials are valid
     const mapSec = document.getElementById('logiwa-client-mapping-section');
     const syncSec = document.getElementById('logiwa-sync-section');
     const syncDiv = document.getElementById('logiwa-sync-divider');
     if (mapSec && s.ok) { mapSec.style.display = ''; renderLogiwaMappings(s.clientMappings || {}); }
     if (syncSec && s.ok) { syncSec.style.display = ''; if (syncDiv) syncDiv.style.display = ''; }
+    // Show ongoing sync progress if already running
+    if (s.ok && s.syncStatus === 'running') {
+      const syncStatus = document.getElementById('logiwa-sync-status');
+      const syncBtn = document.getElementById('logiwa-sync-btn');
+      if (syncStatus) syncStatus.textContent = `Syncing… ${s.syncProgress || 0} items fetched`;
+      if (syncBtn) { syncBtn.disabled = true; syncBtn.textContent = '⟳ Syncing…'; }
+    }
 
     // Populate client dropdown for per-client sync (also populates mapping dropdowns)
     if (s.ok) loadLogiwaClients(true);
@@ -2932,27 +2939,31 @@ async function startLogiwaSync() {
   const clientId = sel ? sel.value : '';
   const clientLabel = sel && clientId ? sel.options[sel.selectedIndex].text : 'all clients';
   if (btn) { btn.disabled = true; btn.textContent = '⟳ Syncing…'; }
-  if (status) status.textContent = `Starting sync for ${clientLabel}…`;
+  if (status) status.textContent = `Syncing ${clientLabel}…`;
+  const syncStarted = Date.now();
   try {
     await apiFetch('/api/logiwa/sync', { method: 'POST', body: JSON.stringify(clientId ? { clientId } : {}) });
-    if (status) status.textContent = 'Sync running in background — check back in a few minutes.';
-    toast('Logiwa inventory sync started');
-    // Poll for completion
+    toast(`Logiwa sync started for ${clientLabel}`);
+    // Poll until syncStatus === 'done' and lastSync is newer than when we started
     let polls = 0;
     const pollTimer = setInterval(async () => {
       polls++;
-      if (polls > 60) { clearInterval(pollTimer); return; }
+      if (polls > 120) { clearInterval(pollTimer); if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Now'; } return; }
       try {
         const s = await apiFetch('/api/logiwa/status');
-        if (s.lastSync && status) {
-          const t = new Date(s.lastSync._seconds ? s.lastSync._seconds*1000 : s.lastSync).toLocaleString();
-          status.textContent = `Last sync: ${t}`;
-          if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Inventory Now'; }
+        const syncTs = s.lastSync ? (s.lastSync._seconds ? s.lastSync._seconds*1000 : new Date(s.lastSync).getTime()) : 0;
+        if (status) {
+          if (s.syncStatus === 'running') status.textContent = `Syncing… ${s.syncProgress || 0} items fetched`;
+          else if (s.syncStatus === 'error') { status.textContent = `Error: ${s.syncError || 'unknown'}`; clearInterval(pollTimer); if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Now'; } }
+        }
+        if (s.syncStatus === 'done' && syncTs > syncStarted) {
+          if (status) status.textContent = `✓ Synced ${s.syncCount || 0} items — ${new Date(syncTs).toLocaleString()}`;
+          if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Now'; }
           clearInterval(pollTimer);
         }
       } catch {}
-    }, 5000);
-  } catch (err) { toast('Error: ' + err.message, 3000); if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Inventory Now'; } }
+    }, 4000);
+  } catch (err) { toast('Error: ' + err.message, 3000); if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Now'; } }
 }
 
 async function loadLogiwaSyncClients() {

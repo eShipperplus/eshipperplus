@@ -2016,21 +2016,34 @@ app.get('/api/logs', requireAuth, requireRole('manager', 'admin'), async (req, r
 // ─── Logiwa Integration ───────────────────────────────────────────────────────
 
 // Helper to get stored Logiwa credentials from Firestore
-async function getLogiwaCreds() {
+// requireEnabled=true: only return if enabled flag is set (for auto-posting)
+// requireEnabled=false: return if email+password present regardless of enabled flag
+async function getLogiwaCreds(requireEnabled = true) {
   const snap = await db.collection('wh_config').doc('logiwa').get();
   if (!snap.exists) return null;
   const d = snap.data();
-  if (!d.enabled || !d.email || !d.password) return null;
+  if (!d.email || !d.password) return null;
+  if (requireEnabled && !d.enabled) return null;
   return d;
 }
 
 // GET /api/logiwa/status — check if configured & test connection
 app.get('/api/logiwa/status', requireAuth, requireRole('admin', 'manager', 'office_support'), async (req, res) => {
   try {
-    const creds = await getLogiwaCreds();
+    const creds = await getLogiwaCreds(false); // show status even if not enabled
     if (!creds) return res.json({ configured: false });
     const token = await logiwa.getToken(creds.email, creds.password);
-    res.json({ configured: true, ok: !!token, email: creds.email, clientMappings: creds.clientMappings || {}, lastSync: creds.lastSync || null });
+    res.json({
+      configured: true,
+      enabled: !!creds.enabled,
+      ok: !!token,
+      email: creds.email,
+      clientMappings: creds.clientMappings || {},
+      lastSync: creds.lastSync || null,
+      syncStatus: creds.syncStatus || null,
+      syncProgress: creds.syncProgress || 0,
+      syncCount: creds.syncCount || 0,
+    });
   } catch (err) {
     res.json({ configured: true, ok: false, error: err.message });
   }
