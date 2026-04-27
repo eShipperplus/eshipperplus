@@ -6,8 +6,6 @@
 
 const https = require('https');
 
-const BASE = 'https://myapi.logiwa.com';
-
 // ── Token cache (per-credential-hash) ──────────────────────────────────────
 const _cache = {};
 
@@ -69,9 +67,8 @@ async function listClients(email, password) {
   }));
 }
 
-// ── Inventory fetch (paginated) ───────────────────────────────────────────
-const INV_PAGE_SIZE = 500; // inventory endpoint supports up to 500
-const MAX_PAGES = 100;     // up to 50k items
+// ── Inventory fetch ───────────────────────────────────────────────────────────
+const INV_PAGE_SIZE = 500;
 
 function _mapItem(item) {
   return {
@@ -92,29 +89,37 @@ function _mapItem(item) {
   };
 }
 
+// Fetch a single page — tries query param filter first, falls back to unfiltered
 async function fetchInventoryPage(token, index, filterClientId) {
-  const r = await _request('GET', `/v3.1/Inventory/list/i/${index}/s/${INV_PAGE_SIZE}`, null, token);
-  if (!r.body?.data) return { data: [], done: true };
+  // Try with clientIdentifier query param
+  const path = filterClientId
+    ? `/v3.1/Inventory/list/i/${index}/s/${INV_PAGE_SIZE}?clientIdentifier=${filterClientId}`
+    : `/v3.1/Inventory/list/i/${index}/s/${INV_PAGE_SIZE}`;
+  const r = await _request('GET', path, null, token);
+  if (!r.body?.data) return { data: [], done: true, rawCount: 0 };
   const raw = r.body.data;
-  const data = (filterClientId
-    ? raw.filter(x => String(x.clientIdentifier) === String(filterClientId))
-    : raw).map(_mapItem);
-  return { data, done: raw.length < INV_PAGE_SIZE };
+  return {
+    data: raw.map(_mapItem),
+    done: raw.length < INV_PAGE_SIZE,
+    rawCount: raw.length,
+  };
 }
 
-// Parallel fetch with CONCURRENCY pages at a time, then 1s pause between batches
+// Fetch all inventory pages in parallel batches of CONCURRENCY
 async function fetchAllInventory(email, password, onProgress, filterClientId) {
   const token = await getToken(email, password);
-  const CONCURRENCY = filterClientId ? 5 : 3; // faster for single-client test syncs
+  const CONCURRENCY = 3;
+  const MAX_PAGES = 100; // 50k items max
   let all = [];
   let pageIndex = 0;
   let done = false;
 
-  while (!done && pageIndex < MAX_PAGES * CONCURRENCY) {
-    // Fire CONCURRENCY pages in parallel
+  while (!done && pageIndex < MAX_PAGES) {
     const indices = [];
-    for (let c = 0; c < CONCURRENCY; c++) indices.push(pageIndex + c);
-    pageIndex += CONCURRENCY;
+    for (let c = 0; c < CONCURRENCY && pageIndex + c < MAX_PAGES; c++) {
+      indices.push(pageIndex + c);
+    }
+    pageIndex += indices.length;
 
     const results = await Promise.all(indices.map(i => fetchInventoryPage(token, i, filterClientId)));
 
@@ -124,7 +129,7 @@ async function fetchAllInventory(email, password, onProgress, filterClientId) {
     }
 
     if (onProgress) onProgress(all.length);
-    if (!done) await new Promise(r => setTimeout(r, 1000)); // 1s between batches
+    if (!done) await new Promise(r => setTimeout(r, 1000));
   }
   return all;
 }

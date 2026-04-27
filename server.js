@@ -2099,16 +2099,18 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
     (async () => {
       try {
         const items = await logiwa.fetchAllInventory(creds.email, creds.password, async (count) => {
-          if (count % 500 === 0) {
-            await db.collection('wh_config').doc('logiwa').update({ syncProgress: count }).catch(() => {});
+          if (count % 1000 === 0) {
+            await db.collection('wh_config').doc('logiwa').update({ syncProgress: count, syncPhase: 'fetching' }).catch(() => {});
           }
         }, filterClientId);
 
-        // Write to Firestore in batches of 500
+        // Switch to write phase
+        await db.collection('wh_config').doc('logiwa').update({ syncPhase: 'writing', syncProgress: 0, syncTotal: items.length }).catch(() => {});
+
         const BATCH_SIZE = 500;
 
+        // Clear existing records for this client (or all for full sync)
         if (!filterClientId) {
-          // Full sync: clear ALL existing inventory first
           const existing = await db.collection('wh_logiwa_inventory').limit(500).get();
           for (let i = 0; i < existing.docs.length; i += 500) {
             const batch = db.batch();
@@ -2116,7 +2118,6 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
             await batch.commit();
           }
         } else {
-          // Client sync: replace only that client's records
           const existing = await db.collection('wh_logiwa_inventory').where('clientId', '==', filterClientId).limit(500).get();
           for (let i = 0; i < existing.docs.length; i += 500) {
             const batch = db.batch();
@@ -2125,14 +2126,15 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
           }
         }
 
-        // Write new inventory
+        // Write new inventory, reporting write progress
         for (let i = 0; i < items.length; i += BATCH_SIZE) {
           const batch = db.batch();
           items.slice(i, i + BATCH_SIZE).forEach(item => {
-            const ref = db.collection('wh_logiwa_inventory').doc(item.inventoryId);
+            const ref = db.collection('wh_logiwa_inventory').doc(String(item.inventoryId));
             batch.set(ref, { ...item, syncedAt: Timestamp.now() });
           });
           await batch.commit();
+          await db.collection('wh_config').doc('logiwa').update({ syncProgress: i + BATCH_SIZE }).catch(() => {});
         }
 
         await db.collection('wh_config').doc('logiwa').update({

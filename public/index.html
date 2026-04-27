@@ -2953,8 +2953,17 @@ async function startLogiwaSync() {
         const s = await apiFetch('/api/logiwa/status');
         const syncTs = s.lastSync ? (s.lastSync._seconds ? s.lastSync._seconds*1000 : new Date(s.lastSync).getTime()) : 0;
         if (status) {
-          if (s.syncStatus === 'running') status.textContent = `Syncing… ${s.syncProgress || 0} items fetched`;
-          else if (s.syncStatus === 'error') { status.textContent = `Error: ${s.syncError || 'unknown'}`; clearInterval(pollTimer); if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Now'; } }
+          if (s.syncStatus === 'running') {
+            if (s.syncPhase === 'writing') {
+              status.textContent = `Writing to database… ${s.syncProgress || 0} / ${s.syncTotal || '?'} items`;
+            } else {
+              status.textContent = `Fetching from Logiwa… ${s.syncProgress || 0} items`;
+            }
+          } else if (s.syncStatus === 'error') {
+            status.textContent = `Error: ${s.syncError || 'unknown'}`;
+            clearInterval(pollTimer);
+            if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync Now'; }
+          }
         }
         if (s.syncStatus === 'done' && syncTs > syncStarted) {
           if (status) status.textContent = `✓ Synced ${s.syncCount || 0} items — ${new Date(syncTs).toLocaleString()}`;
