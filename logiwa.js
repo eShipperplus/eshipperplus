@@ -73,19 +73,22 @@ const INV_PAGE_SIZE = 500;
 function _mapItem(item) {
   return {
     inventoryId: item.identifier,
+    productId: item.productIdentifier,
     sku: item.productSku,
     productName: item.productName,
     clientId: item.clientIdentifier,
     clientName: item.clientDisplayName,
+    warehouseId: item.warehouseIdentifier,
+    warehouseCode: item.warehouseCode,
     location: item.warehouseLocationCode,
     locationId: item.warehouseLocationIdentifier,
+    packTypeId: item.packTypeIdentifier,
     zone: item.warehouseLocationZoneName,
     totalQty: item.totalQuantity,
     availQty: item.availableQuantity,
     lotBatch: item.lotBatchNumber,
     expiry: item.expiryDate,
     upc: item.productUpc,
-    warehouseCode: item.warehouseCode,
   };
 }
 

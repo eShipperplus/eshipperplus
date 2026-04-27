@@ -3165,7 +3165,7 @@ async function searchLogiwaInventory(jobId) {
     if (statusEl) statusEl.textContent = `Found ${items.length} record(s)`;
     if (sel) {
       sel.innerHTML = items.map(i =>
-        `<option value="${i.inventoryId}">${i.sku} | ${i.location || 'No location'} | Avail: ${i.availQty ?? i.totalQty}</option>`
+        `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${i.location || 'No location'} | Avail: ${i.availQty ?? i.totalQty}</option>`
       ).join('');
     }
     if (resultsSection) resultsSection.style.display = '';
@@ -3186,6 +3186,10 @@ async function submitLogiwaMovement(jobId, locId) {
   const targetLocationCode = document.getElementById('lgw-dest-location')?.value?.trim() || '';
   const errEl = document.getElementById('lgw-error');
 
+  // Parse full item data from selected option (needed for transfer)
+  const selectedOpt = invSel?.options[invSel?.selectedIndex];
+  const itemData = selectedOpt?.dataset?.item ? JSON.parse(decodeURIComponent(selectedOpt.dataset.item)) : null;
+
   if (!inventoryId) { if (errEl) { errEl.textContent = 'Select or enter an inventory ID'; errEl.style.display = ''; } return; }
   if (!quantity || quantity < 1) { if (errEl) { errEl.textContent = 'Quantity must be at least 1'; errEl.style.display = ''; } return; }
   if (type === 'transfer' && !targetLocationCode) { if (errEl) { errEl.textContent = 'Enter destination location code for transfer'; errEl.style.display = ''; } return; }
@@ -3196,7 +3200,16 @@ async function submitLogiwaMovement(jobId, locId) {
   try {
     await apiFetch('/api/logiwa/movement', {
       method: 'POST',
-      body: JSON.stringify({ type, inventoryId, quantity, note, jobId, locId, targetLocationCode }),
+      body: JSON.stringify({
+        type, inventoryId, quantity, note, jobId, locId, targetLocationCode,
+        // Source item fields needed for transfer payload
+        productId: itemData?.productId,
+        clientId: itemData?.clientId,
+        warehouseId: itemData?.warehouseId,
+        sourceLocationId: itemData?.locationId,
+        sourceLocationCode: itemData?.location,
+        packTypeId: itemData?.packTypeId,
+      }),
     });
     document.querySelector('.modal-overlay')?.remove();
     const typeLabel = type === 'transfer' ? `transferred ${quantity} units → ${targetLocationCode}` : `${type} ${quantity} units`;
