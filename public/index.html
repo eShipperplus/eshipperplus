@@ -1280,30 +1280,7 @@ function showQuickAssignModal(jobId) {
   const _allUsers = (state.data.users||[]);
   const managers = _allUsers.filter(u => u.role==='manager'||u.role==='admin');
 
-  // office_support: only manager assignment
-  if (role === 'office_support') {
-    showModal(`
-      <div class="modal-header">
-        <h2>Assign Manager — ${job.customerId}</h2>
-        <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label>Select Manager</label>
-          <select id="qa-manager-sel" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:7px;font-size:14px">
-            <option value="">— No manager —</option>
-            ${managers.map(m=>`<option value="${m.uid}" ${job.assignedManagerId===m.uid?'selected':''}>${m.displayName}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-primary" onclick="submitQuickAssignManager('${jobId}')">Assign Manager</button>
-        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      </div>`);
-    return;
-  }
-
-  // admin / manager: full associate assignment
+  // Build associate list
   let associates;
   if (role === 'admin') {
     associates = _allUsers.filter(u => u.role==='associate'||u.role==='manager'||u.role==='admin');
@@ -1314,31 +1291,63 @@ function showQuickAssignModal(jobId) {
       ? _allUsers.filter(u => _memberIds.includes(u.uid || u.id))
       : _allUsers.filter(u => u.role === 'associate');
   }
+
+  const assocChips = associates.map(u => {
+    const initials = (u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
+    const checked = (job.assignedAssocId||[]).includes(u.uid);
+    return `<label style="display:flex;align-items:center;gap:6px;padding:5px 10px 5px 6px;border-radius:20px;border:2px solid ${checked?'var(--primary)':'var(--border)'};background:${checked?'#eef0ff':'#fff'};cursor:pointer;font-size:13px;font-weight:500;transition:all .15s" onclick="setTimeout(()=>{const cb=this.querySelector('input');this.style.borderColor=cb.checked?'var(--primary)':'var(--border)';this.style.background=cb.checked?'#eef0ff':'#fff'},0)">
+      <input type="checkbox" class="qa-assoc-cb" value="${u.uid}" ${checked?'checked':''} style="display:none"/>
+      <div class="user-avatar" style="width:22px;height:22px;font-size:9px;flex-shrink:0">${initials}</div>
+      <span>${u.displayName}</span>
+    </label>`;
+  }).join('');
+
+  const managerDropdown = `
+    <div class="form-group">
+      <label>Manager</label>
+      <select id="qa-manager-sel" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:7px;font-size:14px">
+        <option value="">— No manager —</option>
+        ${managers.map(m=>`<option value="${m.uid}" ${job.assignedManagerId===m.uid?'selected':''}>${m.displayName}</option>`).join('')}
+      </select>
+    </div>`;
+
+  // office_support: manager only
+  if (role === 'office_support') {
+    showModal(`
+      <div class="modal-header">
+        <h2>Reassign — ${job.customerId}</h2>
+        <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:10px;font-size:13px;color:var(--text-light)">Current status: ${statusBadge(job.status)}</div>
+        ${managerDropdown}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="submitQuickAssignManager('${jobId}')">Update Manager</button>
+        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      </div>`);
+    return;
+  }
+
+  // admin: manager + associates
+  // manager: current manager shown (read-only) + associates
   showModal(`
     <div class="modal-header">
-      <h2>Assign Associates — ${job.customerId}</h2>
+      <h2>Reassign — ${job.customerId}</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
-      <div style="margin-bottom:12px;font-size:13px;color:var(--text-light)">
-        Current status: ${statusBadge(job.status)}&nbsp;&nbsp;
-        After assigning: <span class="badge badge-assigned_associate">assigned associate</span>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#f9f9fb;min-height:44px">
-        ${associates.length ? associates.map(u=>{
-          const initials=(u.displayName||'?').split(/[\s.@]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
-          const checked=(job.assignedAssocId||[]).includes(u.uid);
-          return `<label style="display:flex;align-items:center;gap:6px;padding:5px 10px 5px 6px;border-radius:20px;border:2px solid ${checked?'var(--primary)':'var(--border)'};background:${checked?'#eef0ff':'#fff'};cursor:pointer;font-size:13px;font-weight:500;transition:all .15s" onclick="setTimeout(()=>{const cb=this.querySelector('input');this.style.borderColor=cb.checked?'var(--primary)':'var(--border)';this.style.background=cb.checked?'#eef0ff':'#fff'},0)">
-            <input type="checkbox" class="qa-assoc-cb" value="${u.uid}" ${checked?'checked':''} style="display:none"/>
-            <div class="user-avatar" style="width:22px;height:22px;font-size:9px;flex-shrink:0">${initials}</div>
-            <span>${u.displayName}</span>
-          </label>`;
-        }).join('')
-        : '<p style="color:var(--text-light);font-size:13px;margin:0">No users found. Invite users first.</p>'}
+      <div style="margin-bottom:12px;font-size:13px;color:var(--text-light)">Current status: ${statusBadge(job.status)}</div>
+      ${role === 'admin' ? managerDropdown : `<div class="form-group"><label>Manager</label><div style="padding:8px;background:var(--grey);border-radius:6px;font-size:13px">${job.assignedManagerName||'— Not assigned —'}</div></div>`}
+      <div class="form-group">
+        <label>Associates</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#f9f9fb;min-height:44px">
+          ${associates.length ? assocChips : '<p style="color:var(--text-light);font-size:13px;margin:0">No users found. Invite users first.</p>'}
+        </div>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-primary" onclick="submitQuickAssign('${jobId}')">Assign & Update Status</button>
+      <button class="btn btn-primary" onclick="submitQuickAssignBoth('${jobId}')">Update Assignment</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
 }
@@ -1349,7 +1358,27 @@ async function submitQuickAssignManager(jobId) {
   try {
     await apiFetch(`/api/jobs/${jobId}/assign-manager`, { method: 'PUT', body: JSON.stringify({ managerId: mgr }) });
     await loadData(); document.querySelector('.modal-overlay')?.remove(); renderView();
-    toast('Manager assigned');
+    toast('Manager updated');
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
+// Combined assign for admin/manager modal (manager + associates)
+async function submitQuickAssignBoth(jobId) {
+  const mgrSel = document.getElementById('qa-manager-sel');
+  const selected = [...document.querySelectorAll('.qa-assoc-cb:checked')].map(cb => cb.value);
+  if (!selected.length) { toast('Select at least one associate'); return; }
+  try {
+    // Update manager if dropdown present and value changed
+    if (mgrSel?.value) {
+      await apiFetch(`/api/jobs/${jobId}/assign-manager`, { method: 'PUT', body: JSON.stringify({ managerId: mgrSel.value }) });
+    }
+    await apiFetch(`/api/jobs/${jobId}/assign-associate`, {
+      method: 'PUT', body: JSON.stringify({ associateIds: selected }),
+    });
+    await loadData();
+    document.querySelector('.modal-overlay')?.remove();
+    renderView();
+    toast('Assignment updated');
   } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
@@ -1363,7 +1392,7 @@ async function submitQuickAssign(jobId) {
     await loadData();
     document.querySelector('.modal-overlay')?.remove();
     renderView();
-    toast('Assigned — status updated to Assigned Associate');
+    toast('Assignment updated');
   } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
@@ -5590,7 +5619,7 @@ Object.assign(window, {
   showEditUserModal, submitEditUser, getPasswordResetLink,
   editCustomer, saveCustomerEdit,
   showEditJobModal, submitEditJob,
-  showQuickAssignModal, submitQuickAssign, submitQuickAssignManager,
+  showQuickAssignModal, submitQuickAssign, submitQuickAssignManager, submitQuickAssignBoth,
   renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients, resetLogiwaSync, searchLogiwaInventory,
   openLogiwaMovementModal, submitLogiwaMovement,
   assignTech, openLogiwaAttributeModal, searchLogiwaAttrInventory, submitLogiwaAttributes,

@@ -755,10 +755,13 @@ app.put('/api/jobs/:id/assign-manager', requireAuth, requireRole('manager', 'adm
     }
 
     const before = jobSnap.data();
+    // Preserve status if job is already past initial manager assignment
+    const advancedStatuses = ['assigned_associate','in_progress','pending_review','pending_tech_review'];
+    const newStatus = advancedStatuses.includes(before.status) ? before.status : 'assigned_manager';
     const update = {
       assignedManagerId: managerId,
       assignedManagerName: mgrSnap.data().displayName,
-      status: 'assigned_manager',
+      status: newStatus,
       updatedBy: uid,
       updatedByName: user.displayName,
       updatedAt: Timestamp.now(),
@@ -846,10 +849,13 @@ app.put('/api/jobs/:id/assign-associate', requireAuth, requireRole('manager', 'a
     if (validAssocs.length === 0) return res.status(400).json({ error: 'No valid associates found' });
 
     const before = jobSnap.data();
+    // Preserve status if job is already past initial associate assignment
+    const advancedStatuses = ['in_progress','pending_review','pending_tech_review'];
+    const newStatus = advancedStatuses.includes(before.status) ? before.status : 'assigned_associate';
     const update = {
       assignedAssocId: validAssocs.map((s) => s.id),
       assignedAssocNames: validAssocs.map((s) => s.data().displayName),
-      status: 'assigned_associate',
+      status: newStatus,
       updatedBy: uid,
       updatedByName: user.displayName,
       updatedAt: Timestamp.now(),
