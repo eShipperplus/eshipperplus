@@ -77,7 +77,7 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-app.use(express.json({ limit: '8mb' }));  // photos are base64 encoded, need headroom
+app.use(express.json({ limit: '25mb' }));  // attachments up to 15MB base64-encoded
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1435,6 +1435,59 @@ app.post('/api/jobs/:id/locations/:locId/photos', requireAuth, async (req, res) 
     console.error('Photo upload error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Job Attachments ──────────────────────────────────────────────────────────
+const ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024; // 15 MB
+const ATTACHMENT_ALLOWED = ['application/pdf','image/jpeg','image/png','image/webp','image/gif',
+  'application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'video/mp4','video/quicktime'];
+
+app.post('/api/jobs/:id/attachments', requireAuth, requireRole('admin','manager','office_support','tech'), async (req, res) => {
+  try {
+    const { user, uid } = req;
+    const { name, mimeType, data, size } = req.body;
+    if (!name || !data) return res.status(400).json({ error: 'name and data required' });
+    if (size > ATTACHMENT_MAX_BYTES) return res.status(400).json({ error: 'File too large (max 15 MB)' });
+    if (!ATTACHMENT_ALLOWED.includes(mimeType)) return res.status(400).json({ error: `File type not allowed: ${mimeType}` });
+
+    const base64 = data.replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(base64, 'base64');
+    const safeFilename = `${Date.now()}_${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const storagePath = `jobs/${req.params.id}/attachments/${safeFilename}`;
+    const file = bucket.file(storagePath);
+    await file.save(buffer, { metadata: { contentType: mimeType } });
+    const [url] = await file.getSignedUrl({ action: 'read', expires: Date.now() + 10 * 365 * 24 * 60 * 60 * 1000 });
+
+    const attachment = {
+      id: safeFilename,
+      name,
+      mimeType,
+      size,
+      url,
+      storagePath,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: uid,
+      uploadedByName: user.displayName,
+    };
+    await db.collection('wh_jobs').doc(req.params.id).update({ attachments: FieldValue.arrayUnion(attachment) });
+    res.json({ attachment });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/jobs/:id/attachments/:attachmentId', requireAuth, requireRole('admin','manager','office_support','tech'), async (req, res) => {
+  try {
+    const jobSnap = await db.collection('wh_jobs').doc(req.params.id).get();
+    if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
+    const job = jobSnap.data();
+    const att = (job.attachments || []).find(a => a.id === req.params.attachmentId);
+    if (!att) return res.status(404).json({ error: 'Attachment not found' });
+    // Delete from storage
+    await bucket.file(att.storagePath).delete().catch(() => {});
+    await db.collection('wh_jobs').doc(req.params.id).update({ attachments: FieldValue.arrayRemove(att) });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── Locations Excel Export ────────────────────────────────────────────────────

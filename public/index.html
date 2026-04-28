@@ -1456,7 +1456,19 @@ function renderMyJobs() {
                   }
                 </div>`).join('')
               : `<div style="font-size:12px;color:var(--text-light);padding:6px 0">No tasks yet — tap + Add Task to add one</div>`}
-            </div>`;
+            </div>
+            ${(j.attachments||[]).length ? `
+            <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+              <div style="font-size:11px;font-weight:700;color:var(--text-light);letter-spacing:.05em;margin-bottom:6px">📎 ATTACHMENTS</div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                ${j.attachments.map(a=>`
+                <a href="${a.url}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-secondary);border-radius:6px;font-size:13px;color:var(--primary);text-decoration:none">
+                  <span>${a.mimeType==='application/pdf'?'📄':a.mimeType?.startsWith('image/')?'🖼️':a.mimeType?.startsWith('video/')?'🎬':'📎'}</span>
+                  <span style="flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.name}</span>
+                  <span style="color:var(--text-light);font-size:11px">${a.size>1048576?(a.size/1048576).toFixed(1)+'MB':(a.size/1024).toFixed(0)+'KB'}</span>
+                </a>`).join('')}
+              </div>
+            </div>` : ''}`;
           })()}
         </div>
       `).join('')}
@@ -1619,6 +1631,7 @@ function renderCreateJob() {
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <label style="margin:0">Locations / Tasks <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
             <div style="display:flex;gap:6px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('tasks-template.csv',['Location','SKU','BTS'],[['BTS','500026',''],['Shelf-A1','100234',''],['Staging','200011','']])">⬇ Template</button>
               <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('loc-csv-input').click()">⬆ Upload CSV</button>
               <input type="file" id="loc-csv-input" accept=".csv,.xlsx" style="display:none" onchange="handleLocationCSV(this)"/>
               <button type="button" class="btn btn-ghost btn-sm" onclick="addLocationRow()">+ Add Row</button>
@@ -3686,6 +3699,43 @@ async function assignTech(jobId) {
   } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
+// ── Job Attachments ──
+async function uploadJobAttachment(jobId, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const MAX = 15 * 1024 * 1024;
+  if (file.size > MAX) { toast('File too large (max 15 MB)', 3000); input.value = ''; return; }
+  toast('Uploading…', 15000);
+  try {
+    const buf = await file.arrayBuffer();
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    await apiFetch(`/api/jobs/${jobId}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify({ name: file.name, mimeType: file.type, size: file.size, data: b64 }),
+    });
+    toast('Attachment uploaded ✓');
+    // Close current modal and re-open refreshed
+    document.querySelector('.modal-overlay')?.remove();
+    await loadData();
+    renderView();
+    openJobModal(jobId);
+  } catch(err) {
+    toast('Upload failed: ' + err.message, 4000);
+  }
+  input.value = '';
+}
+
+async function deleteJobAttachment(jobId, attachmentId) {
+  if (!confirm('Remove this attachment?')) return;
+  try {
+    await apiFetch(`/api/jobs/${jobId}/attachments/${attachmentId}`, { method: 'DELETE' });
+    toast('Attachment removed');
+    await loadData();
+    renderView();
+    openJobModal(jobId);
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
 // ── Job Modal ──
 async function openJobModal(jobId) {
   const job = state.data.jobs.find(j => j.id === jobId);
@@ -3773,6 +3823,26 @@ async function openJobModal(jobId) {
         </div>
         ${job.assignedTechName ? `<div style="font-size:12px;color:var(--text-light);margin-top:4px">Currently assigned: ${job.assignedTechName}</div>` : ''}
       </div>` : ''}
+      <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <label style="margin:0;font-weight:600">📎 Attachments <span style="font-weight:400;color:var(--text-light);font-size:12px">(visible to all workers on handheld)</span></label>
+          ${['admin','manager','office_support','tech'].includes(state.user.role) ? `
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">
+            + Add File
+            <input type="file" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.doc,.docx,.xls,.xlsx,.mp4,.mov" onchange="uploadJobAttachment('${job.id}',this)"/>
+          </label>` : ''}
+        </div>
+        ${(job.attachments||[]).length === 0 ? `<div style="font-size:13px;color:var(--text-light);padding:8px 0">No attachments yet</div>` : ''}
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${(job.attachments||[]).map(a=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-secondary);border-radius:6px;font-size:13px">
+            <span>${a.mimeType==='application/pdf'?'📄':a.mimeType?.startsWith('image/')?'🖼️':a.mimeType?.startsWith('video/')?'🎬':'📎'}</span>
+            <a href="${a.url}" target="_blank" rel="noopener" style="flex:1;color:var(--primary);text-decoration:none;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.name}</a>
+            <span style="color:var(--text-light);font-size:11px">${a.size>1048576?(a.size/1048576).toFixed(1)+'MB':(a.size/1024).toFixed(0)+'KB'}</span>
+            ${['admin','manager','office_support','tech'].includes(state.user.role)?`<button onclick="deleteJobAttachment('${job.id}','${a.id}')" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:0 2px" title="Remove">×</button>`:''}
+          </div>`).join('')}
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       ${job.status!=='completed' && (state.user.role==='admin'||state.user.role==='manager')?
@@ -5489,6 +5559,7 @@ Object.assign(window, {
   renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients, resetLogiwaSync, searchLogiwaInventory,
   openLogiwaMovementModal, submitLogiwaMovement,
   assignTech, openLogiwaAttributeModal, searchLogiwaAttrInventory, submitLogiwaAttributes,
+  uploadJobAttachment, deleteJobAttachment,
   openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
   toggleAllCustomers, getCustomerPickerValue,
   loadActivityLog, filterActivityLog,
