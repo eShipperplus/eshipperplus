@@ -1631,7 +1631,7 @@ function renderCreateJob() {
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <label style="margin:0">Locations / Tasks <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
             <div style="display:flex;gap:6px">
-              <button type="button" class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('tasks-template.csv',['Location','SKU','BTS'],[['BTS','500026',''],['Shelf-A1','100234',''],['Staging','200011','']])">⬇ Template</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="downloadCSVTemplate('tasks-template.csv',['Location','SKU','Qty','Lot','Expiry','Notes','Count'],[['BTS','500026','12','LOT001','2026-12-31','',''],['Shelf-A1','100234','5','','','',''],['Staging','200011','','','','move to shelf','']])">⬇ Template</button>
               <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('loc-csv-input').click()">⬆ Upload CSV</button>
               <input type="file" id="loc-csv-input" accept=".csv,.xlsx" style="display:none" onchange="handleLocationCSV(this)"/>
               <button type="button" class="btn btn-ghost btn-sm" onclick="addLocationRow()">+ Add Row</button>
