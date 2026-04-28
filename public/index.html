@@ -5532,16 +5532,48 @@ function exportJobsExcel(btn) {
 
 // ── Logiwa Attribute Modal ──
 function openLogiwaAttributeModal(jobId) {
+  const job = (state.data.jobs||[]).find(j => j.id === jobId);
+
+  // --- Auto-fill: extract SKU + captured data from completed tasks ---
+  const doneLocs = (job?.locations||[]).filter(l => l.status === 'done');
+
+  // SKU: look in referenceData for a key matching /sku/i
+  const skuEntry = doneLocs.flatMap(l => Object.entries(l.referenceData||{}))
+    .find(([k]) => /^(kit.?sku|sku)$/i.test(k.trim()));
+  const autoSku = skuEntry?.[1] || '';
+
+  // Captured attributes: search capturedData keys across all done tasks
+  const allCaptured = doneLocs.flatMap(l => Object.entries(l.capturedData||{}));
+  const findCaptured = (...patterns) => {
+    const entry = allCaptured.find(([k]) => patterns.some(p => p.test(k)));
+    return entry?.[1] || '';
+  };
+  const autoLot     = findCaptured(/lot/i, /batch/i);
+  const autoExpiry  = findCaptured(/expir/i);
+  const autoProd    = findCaptured(/prod.*date/i, /manufacture/i, /mfg/i);
+
+  // Format date strings to yyyy-mm-dd for <input type="date">
+  const toDateInput = v => {
+    if (!v) return '';
+    const d = new Date(v);
+    return isNaN(d) ? '' : d.toISOString().split('T')[0];
+  };
+
+  const hasAutoFill = autoSku || autoLot || autoExpiry || autoProd;
+
   showModal(`
     <div class="modal-header">
       <h2>🔬 Update Inventory Attributes</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
+      ${hasAutoFill ? `<div style="background:#ebf8ff;border:1px solid #90cdf4;border-radius:7px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#2c5282">
+        ✅ Pre-filled from captured task data — review and submit
+      </div>` : ''}
       <div class="form-group">
         <label>Search SKU</label>
         <div style="display:flex;gap:8px">
-          <input id="lgw-attr-sku" type="text" placeholder="Enter SKU" style="flex:1" onkeydown="if(event.key==='Enter')searchLogiwaAttrInventory('${jobId}')"/>
+          <input id="lgw-attr-sku" type="text" value="${autoSku}" placeholder="Enter SKU" style="flex:1" onkeydown="if(event.key==='Enter')searchLogiwaAttrInventory('${jobId}')"/>
           <button class="btn btn-primary btn-sm" onclick="searchLogiwaAttrInventory('${jobId}')" id="lgw-attr-search-btn">Search</button>
         </div>
         <div id="lgw-attr-search-status" style="font-size:12px;color:var(--text-light);margin-top:4px"></div>
@@ -5556,16 +5588,16 @@ function openLogiwaAttributeModal(jobId) {
       <div class="form-row">
         <div class="form-group">
           <label>Lot / Batch Number</label>
-          <input id="lgw-attr-lot" type="text" placeholder="e.g. LOT2024-001"/>
+          <input id="lgw-attr-lot" type="text" value="${autoLot}" placeholder="e.g. LOT2024-001"/>
         </div>
         <div class="form-group">
           <label>Expiry Date</label>
-          <input id="lgw-attr-expiry" type="date"/>
+          <input id="lgw-attr-expiry" type="date" value="${toDateInput(autoExpiry)}"/>
         </div>
       </div>
       <div class="form-group">
         <label>Production Date</label>
-        <input id="lgw-attr-prod-date" type="date"/>
+        <input id="lgw-attr-prod-date" type="date" value="${toDateInput(autoProd)}"/>
       </div>
       <div id="lgw-attr-error" style="color:#dc2626;font-size:13px;margin-top:8px;display:none"></div>
     </div>
@@ -5573,6 +5605,9 @@ function openLogiwaAttributeModal(jobId) {
       <button class="btn btn-primary" onclick="submitLogiwaAttributes('${jobId}')">Update Attributes</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
+
+  // Auto-search if SKU was found from tasks
+  if (autoSku) setTimeout(() => searchLogiwaAttrInventory(jobId), 150);
 }
 
 async function searchLogiwaAttrInventory(jobId) {
@@ -5585,7 +5620,7 @@ async function searchLogiwaAttrInventory(jobId) {
   if(statusEl) statusEl.textContent='Searching Logiwa…';
   try {
     const job = (state.data.jobs||[]).find(j=>j.id===jobId);
-    const clientId = job?.customer ? (state._logiwaClientMappings||{})[job.customer]||'' : '';
+    const clientId = job?.customerId ? (state._logiwaClientMappings||{})[job.customerId]||'' : '';
     const params = new URLSearchParams({ sku });
     if(clientId) params.set('clientId', clientId);
     const r = await apiFetch(`/api/logiwa/search?${params}`);
