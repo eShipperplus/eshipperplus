@@ -3892,7 +3892,7 @@ async function openJobModal(jobId) {
           ⬆ Upload Locations CSV
           <input type="file" accept=".csv,.xlsx" style="display:none" onchange="uploadLocationsToJob('${job.id}',this)"/>
         </label>` : ''}
-      ${(job.locations||[]).length && (state.user.role==='admin'||state.user.role==='manager')?
+      ${(job.locations||[]).length && ['admin','manager','office_support'].includes(state.user.role)?
         `<button class="btn btn-ghost" onclick="exportJobLocations('${job.id}')">⬇ Export Excel</button>`:''}
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
     </div>`);
@@ -5401,27 +5401,47 @@ function exportJobsExcel(btn) {
 
     const jobTypeName = id => (state.data.jobTypes||[]).find(t => t.id === id)?.name || id || '';
 
-    const rows = jobs.map(j => ({
-      'Job #':          j.jobNumber || '',
-      'Customer':       j.customerId || '',
-      'Job Type':       jobTypeName(j.jobTypeId),
-      'Status':         (j.status || '').replace(/_/g, ' '),
-      'Billable':       j.billable ? 'Yes' : 'No',
-      'Created Date':   tsStr(j.createdAt),
-      'Due Date':       j.dueDate || '',
-      'Created By':     j.createdByName || '',
-      'Manager':        j.assignedManagerName || '',
-      'Associates':     (j.assignedAssocNames || []).join(', '),
-      'Locations Total':  (j.locations || []).length,
-      'Locations Done':   (j.locations || []).filter(l => l.status === 'done').length,
-      'Revenue ($)':    j.revenue != null ? Number(j.revenue).toFixed(2) : '',
-      'Cost ($)':       j.cost    != null ? Number(j.cost).toFixed(2)    : '',
-      'Profit ($)':     j.profit  != null ? Number(j.profit).toFixed(2)  : '',
-      'Margin (%)':     j.marginPct != null ? Number(j.marginPct).toFixed(1) : '',
-      'Rating':         j.rating || '',
-      'Completed Date': tsStr(j.completedAt),
-      'Cancelled Date': tsStr(j.cancelledAt),
-    }));
+    // Collect all unique field definitions across all job types present in this export
+    const allJobTypeDefs = state.data.jobTypes || [];
+    const fieldMap = {}; // fieldId → label
+    jobs.forEach(j => {
+      const jtDef = allJobTypeDefs.find(t => t.id === j.jobTypeId);
+      (jtDef?.fields || []).forEach(f => { if (!fieldMap[f.id]) fieldMap[f.id] = f.label; });
+    });
+    const fieldIds = Object.keys(fieldMap);
+
+    const rows = jobs.map(j => {
+      const row = {
+        'Job #':          j.jobNumber || '',
+        'Customer':       j.customerId || '',
+        'Job Type':       jobTypeName(j.jobTypeId),
+        'Status':         (j.status || '').replace(/_/g, ' '),
+        'Billable':       j.billable ? 'Yes' : 'No',
+        'Created Date':   tsStr(j.createdAt),
+        'Due Date':       j.dueDate || '',
+        'Created By':     j.createdByName || '',
+        'Manager':        j.assignedManagerName || '',
+        'Associates':     (j.assignedAssocNames || []).join(', '),
+        'Tasks Total':    (j.locations || []).length,
+        'Tasks Done':     (j.locations || []).filter(l => l.status === 'done').length,
+        'Notes':          j.instructions || '',
+      };
+      // Job type fields (Order Number, Cartons, Units, etc.)
+      fieldIds.forEach(fid => {
+        const label = fieldMap[fid];
+        const val = j.fields?.[fid];
+        row[label] = val != null && val !== '' ? val : '';
+      });
+      // Financial columns (admin only — stripped below if not admin)
+      row['Revenue ($)']  = j.revenue  != null ? Number(j.revenue).toFixed(2)  : '';
+      row['Cost ($)']     = j.cost     != null ? Number(j.cost).toFixed(2)     : '';
+      row['Profit ($)']   = j.profit   != null ? Number(j.profit).toFixed(2)   : '';
+      row['Margin (%)']   = j.marginPct != null ? Number(j.marginPct).toFixed(1) : '';
+      row['Rating']       = j.rating || '';
+      row['Completed Date'] = tsStr(j.completedAt);
+      row['Cancelled Date'] = tsStr(j.cancelledAt);
+      return row;
+    });
 
     if (state.user.role !== 'admin') {
       rows.forEach(row => {
