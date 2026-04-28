@@ -1287,9 +1287,8 @@ function showQuickAssignModal(jobId) {
   } else {
     const _myTeam = (state.data.teams||[]).find(t => t.managerId === state.user.uid);
     const _memberIds = _myTeam ? (_myTeam.memberIds || []) : [];
-    associates = _memberIds.length
-      ? _allUsers.filter(u => _memberIds.includes(u.uid || u.id))
-      : _allUsers.filter(u => u.role === 'associate');
+    // Only show this manager's own team members — never fall back to all associates
+    associates = _allUsers.filter(u => _memberIds.includes(u.uid || u.id));
   }
 
   const assocChips = associates.map(u => {
@@ -1522,7 +1521,9 @@ function renderManagerQueue() {
   const uid = state.user.uid;
   const unassigned = state.data.jobs.filter(j => j.status === 'created' || (j.status === 'assigned_manager' && j.assignedManagerId === uid));
   const pendingReview = state.data.jobs.filter(j => j.status === 'pending_review');
-  const myTeamAssocs = (state.data.users||[]).filter(u => u.role === 'associate' || u.role === 'manager');
+  const _myTeam = (state.data.teams||[]).find(t => t.managerId === uid);
+  const _myMemberIds = _myTeam ? (_myTeam.memberIds || []) : [];
+  const myTeamAssocs = (state.data.users||[]).filter(u => _myMemberIds.includes(u.uid || u.id));
 
   return `
     <div class="section-header"><h1>Job Queue</h1></div>
@@ -4377,9 +4378,8 @@ function showAssignLocationsModal(jobId) {
     // Find the team this manager leads
     const myTeam = (state.data.teams||[]).find(t => t.managerId === state.user.uid);
     const memberIds = myTeam ? (myTeam.memberIds || []) : [];
-    associates = memberIds.length
-      ? allUsers.filter(u => memberIds.includes(u.uid || u.id))
-      : allUsers.filter(u => u.role === 'associate'); // fallback: all associates if no team set up
+    // Only show this manager's own team members — never fall back to all associates
+    associates = allUsers.filter(u => memberIds.includes(u.uid || u.id));
   }
   const locs = job.locations || [];
   if (!locs.length) { toast('This job has no locations to assign'); return; }
