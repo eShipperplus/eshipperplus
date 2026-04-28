@@ -3166,6 +3166,9 @@ function openLogiwaMovementModal(jobId, locId, defaultSku, defaultMovementType='
         <div class="form-group">
           <label>Select Inventory Record</label>
           <select id="lgw-inv-sel" style="width:100%"></select>
+          <div style="font-size:11px;color:var(--text-light);margin-top:4px">
+            💡 <strong>Avail: 0</strong> means stock is allocated to an order in Logiwa but physically present — you can still transfer it. <strong>Alloc</strong> = reserved quantity.
+          </div>
         </div>
       </div>
       <div class="form-row">
@@ -3247,13 +3250,18 @@ async function searchLogiwaInventory(jobId) {
         sel.innerHTML = '<option value="" disabled>No locations with stock found</option>';
       } else {
         sel.innerHTML = visible.map(i => {
-          const lot  = i.lotBatch ? `Lot: ${i.lotBatch}` : '';
-          const exp  = i.expiry   ? `Exp: ${i.expiry.split('T')[0]}` : '';
-          const pack = i.packTypeId ? `Pack: ${i.packTypeId}` : '';
+          const lot      = i.lotBatch   ? `Lot: ${i.lotBatch}` : '';
+          const exp      = i.expiry     ? `Exp: ${i.expiry.split('T')[0]}` : '';
+          const packLabel = i.packTypeName || null;
+          const pack     = packLabel ? `Pack: ${packLabel}` : '';
+          const total    = i.totalQty ?? 0;
+          const avail    = i.availQty ?? 0;
+          const allocated = total - avail;
+          const qtyParts = [`Total: ${total}`, `Avail: ${avail}`];
+          if (allocated > 0) qtyParts.push(`Alloc: ${allocated}`);
           const meta = [lot, exp, pack].filter(Boolean).join(' | ');
-          const qty  = `Total: ${i.totalQty ?? 0}  Avail: ${i.availQty ?? 0}`;
           const loc  = i.location || 'No location';
-          return `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${loc} | ${qty}${meta ? ' | ' + meta : ''}</option>`;
+          return `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${loc} | ${qtyParts.join('  ')}${meta ? ' | ' + meta : ''}</option>`;
         }).join('');
       }
     }

@@ -94,6 +94,7 @@ function _mapItem(item) {
     location: item.warehouseLocationCode,
     locationId: item.warehouseLocationIdentifier,
     packTypeId: item.packTypeIdentifier,
+    packTypeName: item.packTypeName || item.packTypeCode || item.packTypeDescription || null,
     zone: item.warehouseLocationZoneName,
     totalQty: item.totalQuantity,
     availQty: item.availableQuantity,
