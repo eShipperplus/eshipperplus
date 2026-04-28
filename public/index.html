@@ -5551,6 +5551,10 @@ function openLogiwaAttributeModal(jobId) {
   const autoLot     = findCaptured(/lot/i, /batch/i);
   const autoExpiry  = findCaptured(/expir/i);
   const autoProd    = findCaptured(/prod.*date/i, /manufacture/i, /mfg/i);
+  const autoLength  = findCaptured(/length/i, /\blen\b/i);
+  const autoWidth   = findCaptured(/width/i);
+  const autoHeight  = findCaptured(/height/i);
+  const autoWeight  = findCaptured(/weight/i);
 
   // Format date strings to yyyy-mm-dd for <input type="date">
   const toDateInput = v => {
@@ -5559,11 +5563,11 @@ function openLogiwaAttributeModal(jobId) {
     return isNaN(d) ? '' : d.toISOString().split('T')[0];
   };
 
-  const hasAutoFill = autoSku || autoLot || autoExpiry || autoProd;
+  const hasAutoFill = autoSku || autoLot || autoExpiry || autoProd || autoLength || autoWidth || autoHeight || autoWeight;
 
   showModal(`
     <div class="modal-header">
-      <h2>🔬 Update Inventory Attributes</h2>
+      <h2>🔬 Update Logiwa — Attributes & Dimensions</h2>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;color:#fff;font-size:20px">✕</button>
     </div>
     <div class="modal-body">
@@ -5585,6 +5589,8 @@ function openLogiwaAttributeModal(jobId) {
           <div style="font-size:11px;color:var(--text-light);margin-top:2px">Hold Ctrl/Cmd to select multiple</div>
         </div>
       </div>
+
+      <div style="font-size:13px;font-weight:700;color:var(--primary);margin:14px 0 8px;border-top:1px solid var(--border);padding-top:12px">Inventory Attributes</div>
       <div class="form-row">
         <div class="form-group">
           <label>Lot / Batch Number</label>
@@ -5599,10 +5605,33 @@ function openLogiwaAttributeModal(jobId) {
         <label>Production Date</label>
         <input id="lgw-attr-prod-date" type="date" value="${toDateInput(autoProd)}"/>
       </div>
+
+      <div style="font-size:13px;font-weight:700;color:var(--primary);margin:14px 0 8px;border-top:1px solid var(--border);padding-top:12px">Product Dimensions &amp; Weight</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Length (cm)</label>
+          <input id="lgw-attr-length" type="number" step="0.01" min="0" value="${autoLength}" placeholder="0.00"/>
+        </div>
+        <div class="form-group">
+          <label>Width (cm)</label>
+          <input id="lgw-attr-width" type="number" step="0.01" min="0" value="${autoWidth}" placeholder="0.00"/>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Height (cm)</label>
+          <input id="lgw-attr-height" type="number" step="0.01" min="0" value="${autoHeight}" placeholder="0.00"/>
+        </div>
+        <div class="form-group">
+          <label>Weight (kg)</label>
+          <input id="lgw-attr-weight" type="number" step="0.001" min="0" value="${autoWeight}" placeholder="0.000"/>
+        </div>
+      </div>
+
       <div id="lgw-attr-error" style="color:#dc2626;font-size:13px;margin-top:8px;display:none"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-primary" onclick="submitLogiwaAttributes('${jobId}')">Update Attributes</button>
+      <button class="btn btn-primary" onclick="submitLogiwaAttributes('${jobId}')">Update Logiwa</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     </div>`);
 
@@ -5627,7 +5656,7 @@ async function searchLogiwaAttrInventory(jobId) {
     const items = r.items||[];
     if(!items.length) { if(statusEl) statusEl.textContent=`No records found for "${sku}"`; return; }
     if(statusEl) statusEl.textContent=`Found ${items.length} record(s) — select which to update`;
-    if(sel) sel.innerHTML = items.map(i=>`<option value="${i.inventoryId}" data-client="${i.clientId}">${i.sku} | ${i.location||'No location'} | Lot: ${i.lotBatch||'—'} | Exp: ${i.expiry||'—'}</option>`).join('');
+    if(sel) sel.innerHTML = items.map(i=>`<option value="${i.inventoryId}" data-client="${i.clientId}" data-product="${i.productId||''}">${i.sku} | ${i.location||'No location'} | Lot: ${i.lotBatch||'—'} | Exp: ${i.expiry||'—'}</option>`).join('');
     document.getElementById('lgw-attr-results').style.display='';
   } catch(err) { if(statusEl) statusEl.textContent='Error: '+err.message; }
   finally { if(btn) { btn.disabled=false; btn.textContent='Search'; } }
@@ -5637,26 +5666,55 @@ async function submitLogiwaAttributes(jobId) {
   const sel = document.getElementById('lgw-attr-inv-sel');
   const inventoryIds = sel ? [...sel.selectedOptions].map(o=>o.value) : [];
   const clientId = sel?.selectedOptions[0]?.dataset?.client || '';
+  const productId = sel?.selectedOptions[0]?.dataset?.product || '';
   const lot = document.getElementById('lgw-attr-lot')?.value?.trim()||null;
   const expiry = document.getElementById('lgw-attr-expiry')?.value||null;
   const prodDate = document.getElementById('lgw-attr-prod-date')?.value||null;
+  const length = parseFloat(document.getElementById('lgw-attr-length')?.value)||null;
+  const width  = parseFloat(document.getElementById('lgw-attr-width')?.value)||null;
+  const height = parseFloat(document.getElementById('lgw-attr-height')?.value)||null;
+  const weight = parseFloat(document.getElementById('lgw-attr-weight')?.value)||null;
   const errEl = document.getElementById('lgw-attr-error');
+
+  const hasAttrs = lot || expiry || prodDate;
+  const hasDims  = length || width || height || weight;
+
   if(!inventoryIds.length) { if(errEl){errEl.textContent='Select at least one inventory record';errEl.style.display='';} return; }
-  if(!lot && !expiry && !prodDate) { if(errEl){errEl.textContent='Enter at least one attribute to update';errEl.style.display='';} return; }
+  if(!hasAttrs && !hasDims) { if(errEl){errEl.textContent='Enter at least one value to update';errEl.style.display='';} return; }
+
   const btn = document.querySelector('.modal-footer .btn-primary');
   if(btn){btn.disabled=true;btn.textContent='Updating…';}
+  if(errEl) errEl.style.display='none';
   try {
-    await apiFetch('/api/logiwa/change-attributes', { method: 'PUT', body: JSON.stringify({
-      inventoryIds, clientId,
-      lotBatchNumber: lot,
-      expiryDate: expiry ? new Date(expiry).toISOString() : null,
-      productionDate: prodDate ? new Date(prodDate).toISOString() : null,
-    })});
+    const tasks = [];
+    if(hasAttrs) {
+      tasks.push(apiFetch('/api/logiwa/change-attributes', { method: 'PUT', body: JSON.stringify({
+        inventoryIds, clientId,
+        lotBatchNumber: lot,
+        expiryDate: expiry ? new Date(expiry).toISOString() : null,
+        productionDate: prodDate ? new Date(prodDate).toISOString() : null,
+      })}));
+    }
+    if(hasDims && productId) {
+      tasks.push(apiFetch('/api/logiwa/product-update', { method: 'PUT', body: JSON.stringify({
+        identifier: productId,
+        ...(length != null ? { length } : {}),
+        ...(width  != null ? { width  } : {}),
+        ...(height != null ? { height } : {}),
+        ...(weight != null ? { weight } : {}),
+      })}));
+    } else if(hasDims && !productId) {
+      throw new Error('Product ID not found — select an inventory record first');
+    }
+    await Promise.all(tasks);
     document.querySelector('.modal-overlay')?.remove();
-    toast('✓ Inventory attributes updated in Logiwa');
+    const parts = [];
+    if(hasAttrs) parts.push('attributes');
+    if(hasDims)  parts.push('dimensions/weight');
+    toast(`✓ Logiwa ${parts.join(' & ')} updated`);
   } catch(err) {
     if(errEl){errEl.textContent='Error: '+err.message;errEl.style.display='';}
-    if(btn){btn.disabled=false;btn.textContent='Update Attributes';}
+    if(btn){btn.disabled=false;btn.textContent='Update Logiwa';}
   }
 }
 
