@@ -3234,11 +3234,28 @@ async function searchLogiwaInventory(jobId) {
       if (statusEl) statusEl.textContent = `No inventory found for "${sku}"`;
       return;
     }
-    if (statusEl) statusEl.textContent = `Found ${items.length} record(s)`;
+    // Filter to items that are physically present (totalQty > 0)
+    const visible = items
+      .filter(i => (i.totalQty ?? 0) > 0)
+      .sort((a, b) => (a.location || '').localeCompare(b.location || ''));
+
+    const hiddenCount = items.length - visible.length;
+    if (statusEl) statusEl.textContent = `Found ${items.length} record(s)${hiddenCount ? ` — ${hiddenCount} empty locations hidden` : ''}`;
+
     if (sel) {
-      sel.innerHTML = items.map(i =>
-        `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${i.location || 'No location'} | Avail: ${i.availQty ?? i.totalQty}</option>`
-      ).join('');
+      if (!visible.length) {
+        sel.innerHTML = '<option value="" disabled>No locations with stock found</option>';
+      } else {
+        sel.innerHTML = visible.map(i => {
+          const lot  = i.lotBatch ? `Lot: ${i.lotBatch}` : '';
+          const exp  = i.expiry   ? `Exp: ${i.expiry.split('T')[0]}` : '';
+          const pack = i.packTypeId ? `Pack: ${i.packTypeId}` : '';
+          const meta = [lot, exp, pack].filter(Boolean).join(' | ');
+          const qty  = `Total: ${i.totalQty ?? 0}  Avail: ${i.availQty ?? 0}`;
+          const loc  = i.location || 'No location';
+          return `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${loc} | ${qty}${meta ? ' | ' + meta : ''}</option>`;
+        }).join('');
+      }
     }
     if (resultsSection) resultsSection.style.display = '';
   } catch(err) {
