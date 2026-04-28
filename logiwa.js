@@ -56,10 +56,21 @@ function clearTokenCache(email) {
   delete _cache[credKey(email)];
 }
 
+// Authenticated request that auto-retries once on 401 (clears stale cached token)
+async function _authRequest(method, path, body, email, password) {
+  const token = await getToken(email, password);
+  const r = await _request(method, path, body, token);
+  if (r.status === 401) {
+    clearTokenCache(email);
+    const freshToken = await getToken(email, password);
+    return _request(method, path, body, freshToken);
+  }
+  return r;
+}
+
 // ── Clients list ─────────────────────────────────────────────────────────────
 async function listClients(email, password) {
-  const token = await getToken(email, password);
-  const r = await _request('GET', '/v3.1/Client/list/i/0/s/200', null, token);
+  const r = await _authRequest('GET', '/v3.1/Client/list/i/0/s/200', null, email, password);
   if (!r.body?.data) throw new Error(`Clients fetch failed: ${JSON.stringify(r.body)}`);
   return r.body.data.map(c => ({
     identifier: c.identifier,
@@ -172,57 +183,39 @@ async function fetchAllInventory(email, password, onProgress, filterClientId) {
 
 // ── Inventory movements (push) ─────────────────────────────────────────────
 async function addInventory(email, password, inventoryIdentifier, quantity, note, adjustmentReasonName) {
-  const token = await getToken(email, password);
-  const r = await _request('PUT', '/v3.1/Inventory/add', {
-    inventoryIdentifier,
-    quantity,
-    note: note || '',
+  return _authRequest('PUT', '/v3.1/Inventory/add', {
+    inventoryIdentifier, quantity, note: note || '',
     ...(adjustmentReasonName ? { adjustmentReasonName } : {}),
-  }, token);
-  return r;
+  }, email, password);
 }
 
 async function removeInventory(email, password, inventoryIdentifier, quantity, note, adjustmentReasonName) {
-  const token = await getToken(email, password);
-  const r = await _request('PUT', '/v3.1/Inventory/remove', {
-    inventoryIdentifier,
-    quantity,
-    note: note || '',
+  return _authRequest('PUT', '/v3.1/Inventory/remove', {
+    inventoryIdentifier, quantity, note: note || '',
     ...(adjustmentReasonName ? { adjustmentReasonName } : {}),
-  }, token);
-  return r;
+  }, email, password);
 }
 
 async function adjustInventory(email, password, inventoryIdentifier, quantity, note, adjustmentReasonName) {
-  const token = await getToken(email, password);
-  const r = await _request('PUT', '/v3.1/Inventory/adjust', {
-    inventoryIdentifier,
-    quantity,
-    note: note || '',
+  return _authRequest('PUT', '/v3.1/Inventory/adjust', {
+    inventoryIdentifier, quantity, note: note || '',
     ...(adjustmentReasonName ? { adjustmentReasonName } : {}),
-  }, token);
-  return r;
+  }, email, password);
 }
 
 // ── Transfer between locations ─────────────────────────────────────────────
 async function transferProduct(email, password, payload) {
-  const token = await getToken(email, password);
-  const r = await _request('POST', '/v3.1/Inventory/transfer/product', payload, token);
-  return r;
+  return _authRequest('POST', '/v3.1/Inventory/transfer/product', payload, email, password);
 }
 
 // ── Change inventory attributes (lot/expiry/production date) ───────────────
 async function changeInventoryAttributes(email, password, payload) {
-  const token = await getToken(email, password);
-  const r = await _request('PUT', '/v3.1/Inventory/change-attributes', payload, token);
-  return r;
+  return _authRequest('PUT', '/v3.1/Inventory/change-attributes', payload, email, password);
 }
 
 // ── Update product (dims/weights/barcodes) ─────────────────────────────────
 async function updateProduct(email, password, productData) {
-  const token = await getToken(email, password);
-  const r = await _request('PUT', '/v3.1/Product/update', productData, token);
-  return r;
+  return _authRequest('PUT', '/v3.1/Product/update', productData, email, password);
 }
 
 module.exports = {

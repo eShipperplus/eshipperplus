@@ -1449,11 +1449,11 @@ app.post('/api/jobs/:id/attachments', requireAuth, requireRole('admin','manager'
     const { user, uid } = req;
     const { name, mimeType, data, size } = req.body;
     if (!name || !data) return res.status(400).json({ error: 'name and data required' });
-    if (size > ATTACHMENT_MAX_BYTES) return res.status(400).json({ error: 'File too large (max 15 MB)' });
     if (!ATTACHMENT_ALLOWED.includes(mimeType)) return res.status(400).json({ error: `File type not allowed: ${mimeType}` });
 
     const base64 = data.replace(/^data:[^;]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
+    if (buffer.length > ATTACHMENT_MAX_BYTES) return res.status(400).json({ error: 'File too large (max 15 MB)' });
     const safeFilename = `${Date.now()}_${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const storagePath = `jobs/${req.params.id}/attachments/${safeFilename}`;
     const file = bucket.file(storagePath);
@@ -2311,20 +2311,20 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
         const BATCH_SIZE = 500;
 
         // Clear existing records for this client (or all for full sync)
-        if (!filterClientId) {
-          const existing = await db.collection('wh_logiwa_inventory').limit(500).get();
-          for (let i = 0; i < existing.docs.length; i += 500) {
-            const batch = db.batch();
-            existing.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
-            await batch.commit();
-          }
-        } else {
-          const existing = await db.collection('wh_logiwa_inventory').where('clientId', '==', filterClientId).limit(500).get();
-          for (let i = 0; i < existing.docs.length; i += 500) {
-            const batch = db.batch();
-            existing.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
-            await batch.commit();
-          }
+        // Must loop until empty — each .get() returns at most 500 docs
+        {
+          const baseQuery = filterClientId
+            ? db.collection('wh_logiwa_inventory').where('clientId', '==', filterClientId)
+            : db.collection('wh_logiwa_inventory');
+          let snap;
+          do {
+            snap = await baseQuery.limit(500).get();
+            if (!snap.empty) {
+              const batch = db.batch();
+              snap.docs.forEach(d => batch.delete(d.ref));
+              await batch.commit();
+            }
+          } while (!snap.empty);
         }
 
         // Write new inventory, reporting write progress

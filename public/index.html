@@ -1398,7 +1398,7 @@ function renderMyJobs() {
                 }
                 if (role === 'tech') {
                   return j.status === 'pending_tech_review'
-                    ? `<button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${j.id}')">🔬 Update Logiwa</button><button class="btn btn-teal btn-sm" onclick="submitReviewComplete('${j.id}')">✓ Complete Tech Review</button>`
+                    ? `<button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${j.id}')">🔬 Update Logiwa</button><button class="btn btn-teal btn-sm" onclick="completeTechReview('${j.id}')">✓ Complete Tech Review</button>`
                     : '';
                 }
                 // Associate: per-associate submission logic
@@ -3194,7 +3194,7 @@ async function searchLogiwaInventory(jobId) {
     // Get clientId from job's customer mapping if available
     const job = (state.data.jobs || []).find(j => j.id === jobId);
     const clientMappings = state._logiwaClientMappings || {};
-    const clientId = job?.customer ? (clientMappings[job.customer] || '') : '';
+    const clientId = job?.customerId ? (clientMappings[job.customerId] || '') : '';
 
     const params = new URLSearchParams({ sku });
     if (clientId) params.set('clientId', clientId);
@@ -3699,6 +3699,21 @@ async function assignTech(jobId) {
   } catch(err) { toast('Error: ' + err.message, 3000); }
 }
 
+// ── Tech Review Complete (no form needed — just marks the job done) ──
+async function completeTechReview(jobId) {
+  if (!confirm('Mark this tech review complete and close the job?')) return;
+  try {
+    const result = await apiFetch(`/api/jobs/${jobId}/complete`, {
+      method: 'PUT',
+      body: JSON.stringify({ fields: {}, managerNotes: '' }),
+    });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadData();
+    showRatingResult(result);
+    renderView();
+  } catch(err) { toast('Error: ' + err.message, 3000); }
+}
+
 // ── Job Attachments ──
 async function uploadJobAttachment(jobId, input) {
   const file = input.files[0];
@@ -3852,7 +3867,7 @@ async function openJobModal(jobId) {
         :''}
       ${job.status === 'pending_tech_review' && (state.user.role === 'tech' || state.user.role === 'admin') ? `
         <button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${job.id}')">🔬 Update Logiwa Attributes</button>
-        <button class="btn btn-teal btn-sm" onclick="this.closest('.modal-overlay').remove();submitReviewComplete('${job.id}')">✓ Complete Tech Review</button>
+        <button class="btn btn-teal btn-sm" onclick="completeTechReview('${job.id}')">✓ Complete Tech Review</button>
       ` : ''}
       ${(()=>{
         // Associate footer button — mirrors My Jobs logic
@@ -5559,6 +5574,7 @@ Object.assign(window, {
   renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients, resetLogiwaSync, searchLogiwaInventory,
   openLogiwaMovementModal, submitLogiwaMovement,
   assignTech, openLogiwaAttributeModal, searchLogiwaAttrInventory, submitLogiwaAttributes,
+  completeTechReview,
   uploadJobAttachment, deleteJobAttachment,
   openLoadTemplateModal, filterTemplateList, applyTemplate, useTemplate, _applyTemplateWithCustomer,
   toggleAllCustomers, getCustomerPickerValue,
