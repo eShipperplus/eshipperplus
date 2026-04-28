@@ -3751,8 +3751,13 @@ async function uploadJobAttachment(jobId, input) {
   if (file.size > MAX) { toast('File too large (max 15 MB)', 3000); input.value = ''; return; }
   toast('Uploading…', 15000);
   try {
-    const buf = await file.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    // Use FileReader to avoid call stack overflow on large files (btoa spread fails >~1MB)
+    const b64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
     await apiFetch(`/api/jobs/${jobId}/attachments`, {
       method: 'POST',
       body: JSON.stringify({ name: file.name, mimeType: file.type, size: file.size, data: b64 }),
