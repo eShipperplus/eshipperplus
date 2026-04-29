@@ -46,6 +46,12 @@ async function notifyOfficeSupport(subject, html) {
   if (emails.length) await sendEmail(emails.join(','), subject, html);
 }
 
+async function notifyTechUsers(subject, html) {
+  const snap = await db.collection('wh_users').where('role', '==', 'tech').get();
+  const emails = snap.docs.map(d => d.data().email).filter(Boolean);
+  if (emails.length) await sendEmail(emails.join(','), subject, html);
+}
+
 // ─── Express Setup ────────────────────────────────────────────────────────────
 const app = express();
 app.use(helmet({ contentSecurityPolicy: false })); // CSP handled separately for SPA
@@ -1227,21 +1233,39 @@ app.put('/api/jobs/:id/complete', requireAuth, async (req, res) => {
         await writeLog({ action: 'job.pending_tech_review', entity: 'job', entityId: req.params.id,
           entityLabel: `${job.jobNumber || req.params.id} · ${job.customerId}`,
           uid, name: user.displayName, email: user.email, role: user.role });
-        // Email office support
-        await notifyOfficeSupport(
-          `[eShipper+] Job ${job.jobNumber || req.params.id} ready for tech review`,
-          `<div style="font-family:sans-serif;max-width:600px">
-            <h2 style="color:#4f46e5">Job Ready for Tech Review</h2>
-            <table style="width:100%;border-collapse:collapse">
-              <tr><td style="padding:6px 0;color:#666">Job</td><td><strong>${job.jobNumber || req.params.id}</strong></td></tr>
-              <tr><td style="padding:6px 0;color:#666">Customer</td><td>${job.customerId}</td></tr>
-              <tr><td style="padding:6px 0;color:#666">Job Type</td><td>${jobType.name}</td></tr>
-              <tr><td style="padding:6px 0;color:#666">Approved by</td><td>${user.displayName}</td></tr>
-              ${managerNotes ? `<tr><td style="padding:6px 0;color:#666">Notes</td><td>${managerNotes}</td></tr>` : ''}
-            </table>
-            <p style="margin-top:16px">Please assign this job to the tech team in the warehouse app.</p>
-          </div>`
-        );
+        // Disposal jobs: email tech users directly to action in Logiwa
+        // All other tech-review jobs: email office support to assign a tech
+        if (job.jobTypeId === 'disposal') {
+          await notifyTechUsers(
+            `[eShipper+] Disposal job ${job.jobNumber || req.params.id} approved — remove from Logiwa`,
+            `<div style="font-family:sans-serif;max-width:600px">
+              <h2 style="color:#c53030">Disposal Job Approved</h2>
+              <p>A disposal job has been approved and is ready for you to post the inventory removal in Logiwa.</p>
+              <table style="width:100%;border-collapse:collapse">
+                <tr><td style="padding:6px 0;color:#666">Job</td><td><strong>${job.jobNumber || req.params.id}</strong></td></tr>
+                <tr><td style="padding:6px 0;color:#666">Customer</td><td>${job.customerId}</td></tr>
+                <tr><td style="padding:6px 0;color:#666">Approved by</td><td>${user.displayName}</td></tr>
+                ${managerNotes ? `<tr><td style="padding:6px 0;color:#666">Notes</td><td>${managerNotes}</td></tr>` : ''}
+              </table>
+              <p style="margin-top:16px">Log in to the warehouse app, open this job under <strong>My Jobs</strong>, and use <strong>Post to Logiwa (Remove)</strong> to remove the disposed items from the dispose location.</p>
+            </div>`
+          );
+        } else {
+          await notifyOfficeSupport(
+            `[eShipper+] Job ${job.jobNumber || req.params.id} ready for tech review`,
+            `<div style="font-family:sans-serif;max-width:600px">
+              <h2 style="color:#4f46e5">Job Ready for Tech Review</h2>
+              <table style="width:100%;border-collapse:collapse">
+                <tr><td style="padding:6px 0;color:#666">Job</td><td><strong>${job.jobNumber || req.params.id}</strong></td></tr>
+                <tr><td style="padding:6px 0;color:#666">Customer</td><td>${job.customerId}</td></tr>
+                <tr><td style="padding:6px 0;color:#666">Job Type</td><td>${jobType.name}</td></tr>
+                <tr><td style="padding:6px 0;color:#666">Approved by</td><td>${user.displayName}</td></tr>
+                ${managerNotes ? `<tr><td style="padding:6px 0;color:#666">Notes</td><td>${managerNotes}</td></tr>` : ''}
+              </table>
+              <p style="margin-top:16px">Please assign this job to the tech team in the warehouse app.</p>
+            </div>`
+          );
+        }
         return res.json({ id: req.params.id, status: 'pending_tech_review', techReviewRequired: true });
       }
     }

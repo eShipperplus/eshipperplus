@@ -1425,9 +1425,11 @@ function renderMyJobs() {
                     : j.status !== 'completed' ? `<button class="btn btn-teal btn-sm" onclick="openCompleteModal('${j.id}')">Complete</button>` : '';
                 }
                 if (role === 'tech') {
-                  return j.status === 'pending_tech_review'
-                    ? `<button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${j.id}')">🔬 Update Logiwa</button><button class="btn btn-teal btn-sm" onclick="completeTechReview('${j.id}')">✓ Complete Tech Review</button>`
-                    : '';
+                  if (j.status !== 'pending_tech_review') return '';
+                  const isDisposal = j.jobTypeId === 'disposal';
+                  return isDisposal
+                    ? `<button class="btn btn-danger btn-sm" onclick="openLogiwaMovementModal('${j.id}','','','remove')">🗑️ Post to Logiwa (Remove)</button><button class="btn btn-teal btn-sm" onclick="completeTechReview('${j.id}')">✓ Complete Tech Review</button>`
+                    : `<button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${j.id}')">🔬 Update Logiwa</button><button class="btn btn-teal btn-sm" onclick="completeTechReview('${j.id}')">✓ Complete Tech Review</button>`;
                 }
                 // Associate: per-associate submission logic
                 if (!(j.assignedAssocId||[]).includes(uid) && j.createdBy !== uid) return '';
@@ -3926,7 +3928,9 @@ async function openJobModal(jobId) {
           : `<button class="btn btn-teal" onclick="this.closest('.modal-overlay').remove();openCompleteModal('${job.id}')">Complete</button>`
         :''}
       ${job.status === 'pending_tech_review' && (state.user.role === 'tech' || state.user.role === 'admin') ? `
-        <button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${job.id}')">🔬 Update Logiwa Attributes</button>
+        ${job.jobTypeId === 'disposal'
+          ? `<button class="btn btn-danger btn-sm" onclick="openLogiwaMovementModal('${job.id}','','','remove')">🗑️ Post to Logiwa (Remove)</button>`
+          : `<button class="btn btn-primary btn-sm" onclick="openLogiwaAttributeModal('${job.id}')">🔬 Update Logiwa Attributes</button>`}
         <button class="btn btn-teal btn-sm" onclick="completeTechReview('${job.id}')">✓ Complete Tech Review</button>
       ` : ''}
       ${(()=>{
@@ -4832,6 +4836,28 @@ async function submitMarkLocationDone(jobId, locId) {
     capturedData[key] = val;
   });
   const assocNotes = document.getElementById('loc-done-notes')?.value || '';
+
+  // ── Quantity cap: captured qty must not exceed reference qty ──
+  const loc = (job?.locations||[]).find(l => l.id === locId);
+  const refData = loc?.referenceData || {};
+  const QTY_RE = /^(qty|quantity|units|count|pieces|pcs|disposal.?qty)$/i;
+  const refQtyEntry = Object.entries(refData).find(([k]) => QTY_RE.test(k.trim()));
+  if (refQtyEntry) {
+    const refLimit = parseFloat(refQtyEntry[1]);
+    if (!isNaN(refLimit)) {
+      const capQtyEntry = Object.entries(capturedData).find(([k]) => QTY_RE.test(k.trim()));
+      if (capQtyEntry) {
+        const capVal = parseFloat(capQtyEntry[1]);
+        if (!isNaN(capVal) && capVal > refLimit) {
+          const b = document.getElementById('loc-done-btn');
+          if (b) { b.disabled = false; b.innerHTML = 'Mark as Done'; }
+          toast(`❌ ${capQtyEntry[0]} cannot exceed ${refLimit} (task limit)`, 4000);
+          return;
+        }
+      }
+    }
+  }
+
   const btn = document.getElementById('loc-done-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
   try {
