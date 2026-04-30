@@ -2433,8 +2433,14 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     else if (type === 'adjust') result = await logiwa.adjustInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'transfer') {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
+      const { productId, clientId, warehouseId, sourceLocationId, packTypeId } = req.body;
       const transferPayload = {
         inventoryIdentifier: inventoryId,
+        clientIdentifier: clientId || undefined,
+        sourceWarehouseIdentifier: warehouseId || undefined,
+        productIdentifier: productId || undefined,
+        packTypeIdentifier: packTypeId || undefined,
+        sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
         note: jobNote,
@@ -2444,9 +2450,10 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     }
     else return res.status(400).json({ error: 'Invalid type' });
 
-    if (result.status >= 400) {
-      console.error('[Logiwa movement error]', JSON.stringify(result.body, null, 2));
-      return res.status(result.status).json({ error: JSON.stringify(result.body), logiwaResponse: result.body });
+    if (result.status >= 400 || result.body === null) {
+      console.error('[Logiwa movement error] HTTP', result.status, JSON.stringify(result.body, null, 2));
+      const errMsg = result.body ? JSON.stringify(result.body) : `Logiwa HTTP ${result.status} (empty response)`;
+      return res.status(400).json({ error: errMsg, logiwaStatus: result.status, logiwaResponse: result.body });
     }
 
     // Record the movement on the job in Firestore
