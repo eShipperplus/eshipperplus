@@ -4845,15 +4845,16 @@ async function submitMarkLocationDone(jobId, locId) {
   if (refQtyEntry) {
     const refLimit = parseFloat(refQtyEntry[1]);
     if (!isNaN(refLimit)) {
-      const capQtyEntry = Object.entries(capturedData).find(([k]) => QTY_RE.test(k.trim()));
+      // Check any captured field that has a numeric value — name doesn't need to match
+      const capQtyEntry = Object.entries(capturedData).find(([, v]) => {
+        const n = parseFloat(v);
+        return !isNaN(n) && n > refLimit;
+      });
       if (capQtyEntry) {
-        const capVal = parseFloat(capQtyEntry[1]);
-        if (!isNaN(capVal) && capVal > refLimit) {
-          const b = document.getElementById('loc-done-btn');
-          if (b) { b.disabled = false; b.innerHTML = 'Mark as Done'; }
-          toast(`❌ ${capQtyEntry[0]} cannot exceed ${refLimit} (task limit)`, 4000);
-          return;
-        }
+        const b = document.getElementById('loc-done-btn');
+        if (b) { b.disabled = false; b.innerHTML = 'Mark as Done'; }
+        toast(`❌ ${capQtyEntry[0]} cannot exceed ${refLimit} (task limit)`, 4000);
+        return;
       }
     }
   }
