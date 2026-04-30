@@ -2398,11 +2398,19 @@ app.get('/api/logiwa/search', requireAuth, async (req, res) => {
 
     // Firestore cache fallback — covers full 33k+ inventory when real-time misses it
     if (items.length === 0) {
-      let q = db.collection('wh_logiwa_inventory');
-      if (clientId) q = q.where('clientId', '==', clientId.trim());
-      const snap = await q.limit(10000).get();
       const skuLower = sku.toLowerCase();
-      items = snap.docs.map(d => d.data()).filter(x => x.sku && x.sku.toLowerCase().includes(skuLower)).slice(0, 50);
+      // Try exact match first (fast, no limit needed)
+      let exactQ = db.collection('wh_logiwa_inventory').where('sku', '==', sku);
+      if (clientId) exactQ = exactQ.where('clientId', '==', clientId.trim());
+      const exactSnap = await exactQ.limit(50).get();
+      items = exactSnap.docs.map(d => d.data());
+      // If no exact match, scan full collection (covers all 33k+ items)
+      if (items.length === 0) {
+        let q = db.collection('wh_logiwa_inventory');
+        if (clientId) q = q.where('clientId', '==', clientId.trim());
+        const snap = await q.get(); // no limit — full scan
+        items = snap.docs.map(d => d.data()).filter(x => x.sku && x.sku.toLowerCase().includes(skuLower)).slice(0, 50);
+      }
     }
 
     res.json({ items, count: items.length });
