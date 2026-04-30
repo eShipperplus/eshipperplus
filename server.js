@@ -2435,14 +2435,14 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
       const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId } = req.body;
       // Only send spec-defined fields — no inventoryIdentifier or note (not in Logiwa transfer/product spec)
+      // Send both location identifier and code — let Logiwa use whichever it needs
       const transferPayload = {
         clientIdentifier: clientId || undefined,
         sourceWarehouseIdentifier: warehouseId || undefined,
         productIdentifier: productId || undefined,
-        packTypeIdentifier: packTypeId || undefined,
-        ...(sourceLocationId
-          ? { sourceWarehouseLocationIdentifier: sourceLocationId }
-          : sourceLocationCode ? { sourceWarehouseLocationCode: sourceLocationCode } : {}),
+        // packTypeIdentifier omitted — causes "no inventory" mismatch on some records
+        sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
+        sourceWarehouseLocationCode: sourceLocationCode || undefined,
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
       };
