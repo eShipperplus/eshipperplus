@@ -2435,6 +2435,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
       const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId } = req.body;
       const transferPayload = {
+        inventoryIdentifier: inventoryId,
         clientIdentifier: clientId || undefined,
         sourceWarehouseIdentifier: warehouseId || undefined,
         productIdentifier: productId || undefined,
