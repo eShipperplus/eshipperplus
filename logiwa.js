@@ -206,7 +206,7 @@ async function adjustInventory(email, password, inventoryIdentifier, quantity, n
 
 // ── Transfer between locations ─────────────────────────────────────────────
 async function transferProduct(email, password, payload) {
-  return _authRequest('POST', '/v3.1/Inventory/transfer', payload, email, password);
+  return _authRequest('POST', '/v3.1/Inventory/transfer/product', payload, email, password);
 }
 
 // ── Change inventory attributes (lot/expiry/production date) ───────────────
