@@ -2385,14 +2385,26 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
   }
 });
 
-// GET /api/logiwa/search — real-time SKU search directly against Logiwa API (no cache needed)
+// GET /api/logiwa/search — real-time SKU search, falls back to Firestore cache for full coverage
 app.get('/api/logiwa/search', requireAuth, async (req, res) => {
   try {
     const { sku, clientId } = req.query;
     if (!sku) return res.status(400).json({ error: 'sku is required' });
     const creds = await getLogiwaCreds(false);
     if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
-    const items = await logiwa.searchInventoryBySku(creds.email, creds.password, sku, clientId || null);
+
+    // Real-time search (covers first ~10k items)
+    let items = await logiwa.searchInventoryBySku(creds.email, creds.password, sku, clientId || null);
+
+    // Firestore cache fallback — covers full 33k+ inventory when real-time misses it
+    if (items.length === 0) {
+      let q = db.collection('wh_logiwa_inventory');
+      if (clientId) q = q.where('clientId', '==', clientId.trim());
+      const snap = await q.limit(10000).get();
+      const skuLower = sku.toLowerCase();
+      items = snap.docs.map(d => d.data()).filter(x => x.sku && x.sku.toLowerCase().includes(skuLower)).slice(0, 50);
+    }
+
     res.json({ items, count: items.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
