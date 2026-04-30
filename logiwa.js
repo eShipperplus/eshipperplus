@@ -125,8 +125,8 @@ async function searchInventoryBySku(email, password, sku, clientId) {
   const token = await getToken(email, password);
   const skuLower = sku.trim().toLowerCase();
   const matches = [];
-  const MAX_PAGES = 20;   // up to 10k items
-  const CONCURRENCY = 5;  // fetch 5 pages at once
+  const MAX_PAGES = 20;    // up to 10k items
+  const CONCURRENCY = 10;  // fetch 10 pages at once
   let pageIndex = 0;
   let done = false;
 
@@ -148,6 +148,7 @@ async function searchInventoryBySku(email, password, sku, clientId) {
         .filter(x => x.productSku && x.productSku.toLowerCase().includes(skuLower))
         .map(_mapItem));
       if (r.body.data.length < INV_PAGE_SIZE) { done = true; break; }
+      if (matches.length >= 50) break; // stop scanning mid-batch once we have enough
     }
   }
   return matches;

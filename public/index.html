@@ -3195,7 +3195,7 @@ function openLogiwaMovementModal(jobId, locId, defaultSku, defaultMovementType='
         <div class="form-group">
           <label>Destination Location Code <span style="color:#dc2626">*</span></label>
           <input id="lgw-dest-location" type="text" placeholder="e.g. A-01-01 (the shelf/bin to move stock into)"/>
-          <div style="font-size:12px;color:var(--text-light);margin-top:3px">Enter the Logiwa location code for the destination shelf or bin</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:3px">Must be an exact Logiwa location code (e.g. <strong>01-A-01</strong>). Must exist in Logiwa or transfer will fail.</div>
         </div>
       </div>
       <div class="form-group">
