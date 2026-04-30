@@ -3294,6 +3294,22 @@ async function submitLogiwaMovement(jobId, locId) {
   if (!quantity || quantity < 1) { if (errEl) { errEl.textContent = 'Quantity must be at least 1'; errEl.style.display = ''; } return; }
   if (type === 'transfer' && !targetLocationCode) { if (errEl) { errEl.textContent = 'Enter destination location code for transfer'; errEl.style.display = ''; } return; }
 
+  // ── Quantity cap: must not exceed reference qty on the linked task ──
+  if (locId) {
+    const job = (state.data.jobs||[]).find(j => j.id === jobId);
+    const loc = (job?.locations||[]).find(l => l.id === locId);
+    const refData = loc?.referenceData || {};
+    const QTY_RE = /^(qty|quantity|units|count|pieces|pcs|disposal.?qty)$/i;
+    const refQtyEntry = Object.entries(refData).find(([k]) => QTY_RE.test(k.trim()));
+    if (refQtyEntry) {
+      const refLimit = parseFloat(refQtyEntry[1]);
+      if (!isNaN(refLimit) && quantity > refLimit) {
+        if (errEl) { errEl.textContent = `Quantity cannot exceed ${refLimit} (task limit)`; errEl.style.display = ''; }
+        return;
+      }
+    }
+  }
+
   const submitBtn = document.querySelector('.modal-footer .btn-primary');
   if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Posting…'; }
 
