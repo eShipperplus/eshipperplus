@@ -2448,13 +2448,13 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
         quantity,
         note: jobNote,
       };
-      console.log('[Logiwa transfer payload]', JSON.stringify(transferPayload, null, 2));
+      console.log('[Logiwa transfer payload] ' + JSON.stringify(transferPayload));
       result = await logiwa.transferProduct(creds.email, creds.password, transferPayload);
     }
     else return res.status(400).json({ error: 'Invalid type' });
 
     if (result.status >= 400 || result.body === null) {
-      console.error('[Logiwa movement error] HTTP', result.status, JSON.stringify(result.body, null, 2));
+      console.error('[Logiwa movement error] HTTP ' + result.status + ' ' + JSON.stringify(result.body));
       const errMsg = result.body ? JSON.stringify(result.body) : `Logiwa HTTP ${result.status} (empty response)`;
       return res.status(400).json({ error: errMsg, logiwaStatus: result.status, logiwaResponse: result.body });
     }
