@@ -139,12 +139,11 @@ async function searchInventoryBySku(email, password, sku, clientId) {
       const path = clientId
         ? `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}?clientIdentifier=${clientId}`
         : `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}`;
-      return _request('GET', path, null, token).catch(() => ({ body: null }));
+      return _request('GET', path, null, token);
     }));
 
     for (const r of results) {
-      if (!r.body?.data) continue; // skip failed/rate-limited pages, don't stop
-      if (r.body.data.length === 0) { done = true; break; }
+      if (!r.body?.data || r.body.data.length === 0) { done = true; break; }
       matches.push(...r.body.data
         .filter(x => x.productSku && x.productSku.toLowerCase().includes(skuLower))
         .map(_mapItem));
