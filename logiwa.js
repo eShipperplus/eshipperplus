@@ -125,8 +125,8 @@ async function searchInventoryBySku(email, password, sku, clientId) {
   const token = await getToken(email, password);
   const skuLower = sku.trim().toLowerCase();
   const matches = [];
-  const MAX_PAGES = 20;    // up to 10k items
-  const CONCURRENCY = 10;  // fetch 10 pages at once
+  const MAX_PAGES = 20;   // up to 10k items
+  const CONCURRENCY = 5;  // fetch 5 pages at once — more causes Logiwa rate limits
   let pageIndex = 0;
   let done = false;
 
@@ -139,16 +139,16 @@ async function searchInventoryBySku(email, password, sku, clientId) {
       const path = clientId
         ? `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}?clientIdentifier=${clientId}`
         : `/v3.1/Inventory/list/i/${i}/s/${INV_PAGE_SIZE}`;
-      return _request('GET', path, null, token);
+      return _request('GET', path, null, token).catch(() => ({ body: null }));
     }));
 
     for (const r of results) {
-      if (!r.body?.data || r.body.data.length === 0) { done = true; break; }
+      if (!r.body?.data) continue; // skip failed/rate-limited pages, don't stop
+      if (r.body.data.length === 0) { done = true; break; }
       matches.push(...r.body.data
         .filter(x => x.productSku && x.productSku.toLowerCase().includes(skuLower))
         .map(_mapItem));
       if (r.body.data.length < INV_PAGE_SIZE) { done = true; break; }
-      if (matches.length >= 50) break; // stop scanning mid-batch once we have enough
     }
   }
   return matches;
