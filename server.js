@@ -1,4 +1,5 @@
 'use strict';
+// force-redeploy: fresh Cloud Run instances to clear gRPC rate-limit state
 
 const express = require('express');
 const { initializeApp, cert } = require('firebase-admin/app');
