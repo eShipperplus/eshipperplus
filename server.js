@@ -2433,15 +2433,8 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     else if (type === 'adjust') result = await logiwa.adjustInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'transfer') {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
-      const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId } = req.body;
       const transferPayload = {
         inventoryIdentifier: inventoryId,
-        clientIdentifier: clientId || undefined,
-        sourceWarehouseIdentifier: warehouseId || undefined,
-        productIdentifier: productId || undefined,
-        packTypeIdentifier: packTypeId || undefined,
-        sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
-        // Do NOT send sourceWarehouseLocationCode when identifier is present (Logiwa rejects both)
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
         note: jobNote,
