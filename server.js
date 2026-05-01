@@ -2394,23 +2394,45 @@ app.get('/api/logiwa/search', requireAuth, async (req, res) => {
     const creds = await getLogiwaCreds(false);
     if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
 
-    // Real-time search (covers first ~10k items)
+    // Real-time search against Logiwa API (covers first ~10k items)
     let items = await logiwa.searchInventoryBySku(creds.email, creds.password, sku, clientId || null);
+    console.log('[Logiwa search] real-time:', items.length, 'for:', sku, '| clientId:', clientId||'none');
 
-    // Firestore cache fallback — prefix range covers full synced inventory (all 33k+ items)
+    // Firestore cache fallback — searches all 33k+ synced items
     if (items.length === 0) {
       const skuSearch = sku.trim();
+      // Prefix range query (Firestore "starts with")
+      const HIGH = skuSearch + String.fromCharCode(0xF8FF);
       const snap = await db.collection('wh_logiwa_inventory')
         .where('sku', '>=', skuSearch)
-        .where('sku', '<=', skuSearch + '')
+        .where('sku', '<=', HIGH)
         .limit(100)
         .get();
-      items = snap.docs.map(d => d.data());
-      if (clientId) items = items.filter(it => it.clientId === clientId.trim());
+      console.log('[Logiwa search] Firestore range:', snap.size, 'docs');
+
+      if (snap.size > 0) {
+        items = snap.docs.map(d => d.data());
+      } else {
+        // Try lowercase range in case SKU stored differently
+        const skuLow = skuSearch.toLowerCase();
+        const snap2 = await db.collection('wh_logiwa_inventory')
+          .where('sku', '>=', skuLow)
+          .where('sku', '<=', skuLow + String.fromCharCode(0xF8FF))
+          .limit(100)
+          .get();
+        console.log('[Logiwa search] Firestore lowercase range:', snap2.size, 'docs');
+        items = snap2.docs.map(d => d.data());
+      }
+      // Apply clientId filter in-memory — but only if it keeps results
+      if (clientId && items.length > 0) {
+        const filtered = items.filter(it => it.clientId === clientId.trim());
+        items = filtered.length > 0 ? filtered : items; // fall back to all if filter removes everything
+      }
     }
 
     res.json({ items, count: items.length });
   } catch (err) {
+    console.error('[Logiwa search error]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
