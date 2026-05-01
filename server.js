@@ -2471,7 +2471,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     else if (type === 'adjust') result = await logiwa.adjustInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'transfer') {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
-      const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId, lotBatch, expiry } = req.body;
+      const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId, lotBatch, expiry, productionDate } = req.body;
       // Logiwa spec: packTypeIdentifier required; only one of locationIdentifier OR locationCode (not both)
       const transferPayload = {
         clientIdentifier: clientId || undefined,
@@ -2481,6 +2481,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
         sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
         lotBatchNumber: lotBatch || undefined,
         expiryDate: expiry || undefined,
+        productionDate: productionDate || undefined,
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
       };

@@ -100,6 +100,7 @@ function _mapItem(item) {
     availQty: item.availableQuantity,
     lotBatch: item.lotBatchNumber,
     expiry: item.expiryDate,
+    productionDate: item.productionDate || null,
     upc: item.productUpc,
   };
 }
