@@ -3170,7 +3170,7 @@ function openLogiwaMovementModal(jobId, locId, defaultSku, defaultMovementType='
           <label>Select Inventory Record</label>
           <select id="lgw-inv-sel" style="width:100%" onchange="updateLogiwaProductInfo()"></select>
           <div style="font-size:11px;color:var(--text-light);margin-top:4px">
-            💡 <strong>Avail: 0</strong> means stock is allocated to an order in Logiwa but physically present — you can still transfer it. <strong>Alloc</strong> = reserved quantity.
+            💡 <strong>Qty</strong> = physical units in that location. <strong>"on order"</strong> = reserved for an existing order but still physically present and transferable.
           </div>
         </div>
         <div id="lgw-product-info" style="display:none;background:#f0f4ff;border:1px solid #c7d7f9;border-radius:6px;padding:10px 12px;margin-top:-8px;margin-bottom:12px;font-size:13px">
@@ -3257,18 +3257,17 @@ async function searchLogiwaInventory(jobId) {
         sel.innerHTML = '<option value="" disabled>No locations with stock found</option>';
       } else {
         sel.innerHTML = visible.map(i => {
-          const lot      = i.lotBatch   ? `Lot: ${i.lotBatch}` : '';
-          const exp      = i.expiry     ? `Exp: ${i.expiry.split('T')[0]}` : '';
-          const packLabel = i.packTypeName || null;
-          const pack     = packLabel ? `Pack: ${packLabel}` : '';
-          const total    = i.totalQty ?? 0;
-          const avail    = i.availQty ?? 0;
-          const allocated = total - avail;
-          const qtyParts = [`Total: ${total}`, `Avail: ${avail}`];
-          if (allocated > 0) qtyParts.push(`Alloc: ${allocated}`);
-          const meta = [lot, exp, pack].filter(Boolean).join(' | ');
-          const loc  = i.location || 'No location';
-          return `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${loc} | ${qtyParts.join('  ')}${meta ? ' | ' + meta : ''}</option>`;
+          const lot   = i.lotBatch ? `Lot: ${i.lotBatch}` : '';
+          const exp   = i.expiry   ? `Exp: ${i.expiry.split('T')[0]}` : '';
+          const pack  = i.packTypeName ? `Pack: ${i.packTypeName}` : '';
+          const total = i.totalQty ?? 0;
+          const avail = i.availQty ?? 0;
+          const allocd = total - avail;
+          // Show physical qty; note allocated separately so it's not confused with "no stock"
+          const qtyStr = allocd > 0 ? `Qty: ${total} (${allocd} on order)` : `Qty: ${total}`;
+          const meta  = [lot, exp, pack].filter(Boolean).join(' | ');
+          const loc   = i.location || 'No location';
+          return `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${loc} | ${qtyStr}${meta ? ' | ' + meta : ''}</option>`;
         }).join('');
       }
     }
