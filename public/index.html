@@ -3168,10 +3168,14 @@ function openLogiwaMovementModal(jobId, locId, defaultSku, defaultMovementType='
       <div id="lgw-results-section" style="display:none">
         <div class="form-group">
           <label>Select Inventory Record</label>
-          <select id="lgw-inv-sel" style="width:100%"></select>
+          <select id="lgw-inv-sel" style="width:100%" onchange="updateLogiwaProductInfo()"></select>
           <div style="font-size:11px;color:var(--text-light);margin-top:4px">
             💡 <strong>Avail: 0</strong> means stock is allocated to an order in Logiwa but physically present — you can still transfer it. <strong>Alloc</strong> = reserved quantity.
           </div>
+        </div>
+        <div id="lgw-product-info" style="display:none;background:#f0f4ff;border:1px solid #c7d7f9;border-radius:6px;padding:10px 12px;margin-top:-8px;margin-bottom:12px;font-size:13px">
+          <div id="lgw-product-name" style="font-weight:600;color:#1e3a8a;margin-bottom:4px"></div>
+          <div id="lgw-product-barcode" style="color:#374151"></div>
         </div>
       </div>
       <div class="form-row">
@@ -3269,11 +3273,31 @@ async function searchLogiwaInventory(jobId) {
       }
     }
     if (resultsSection) resultsSection.style.display = '';
+    updateLogiwaProductInfo();
   } catch(err) {
     if (statusEl) statusEl.textContent = 'Error: ' + err.message;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Search'; }
   }
+}
+
+function updateLogiwaProductInfo() {
+  const sel = document.getElementById('lgw-inv-sel');
+  const infoEl = document.getElementById('lgw-product-info');
+  const nameEl = document.getElementById('lgw-product-name');
+  const barcodeEl = document.getElementById('lgw-product-barcode');
+  if (!sel || !infoEl) return;
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt?.dataset?.item) { infoEl.style.display = 'none'; return; }
+  try {
+    const item = JSON.parse(decodeURIComponent(opt.dataset.item));
+    const name = item.productName || '';
+    const upc = item.upc || '';
+    if (!name && !upc) { infoEl.style.display = 'none'; return; }
+    nameEl.textContent = name || '—';
+    barcodeEl.innerHTML = upc ? `🔢 Barcode: <strong>${upc}</strong>` : 'No barcode on file';
+    infoEl.style.display = '';
+  } catch { infoEl.style.display = 'none'; }
 }
 
 async function submitLogiwaMovement(jobId, locId) {
@@ -5788,7 +5812,7 @@ Object.assign(window, {
   showEditJobModal, submitEditJob,
   showQuickAssignModal, submitQuickAssign, submitQuickAssignManager, submitQuickAssignBoth,
   renderIntegrations, loadLogiwaStatus, saveLogiwaConfig, saveLogiwaMappings, loadLogiwaClients, startLogiwaSync, loadLogiwaSyncClients, resetLogiwaSync, searchLogiwaInventory,
-  openLogiwaMovementModal, submitLogiwaMovement,
+  openLogiwaMovementModal, submitLogiwaMovement, updateLogiwaProductInfo,
   assignTech, openLogiwaAttributeModal, searchLogiwaAttrInventory, submitLogiwaAttributes,
   completeTechReview,
   uploadJobAttachment, deleteJobAttachment,
