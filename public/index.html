@@ -3350,6 +3350,7 @@ async function submitLogiwaMovement(jobId, locId) {
         sourceLocationCode: itemData?.location,
         packTypeId: itemData?.packTypeId,
         lotBatch: itemData?.lotBatch,
+        expiry: itemData?.expiry,
       }),
     });
     document.querySelector('.modal-overlay')?.remove();
