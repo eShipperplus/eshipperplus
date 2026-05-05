@@ -20,7 +20,7 @@ const firebaseConfig = process.env.FIREBASE_SERVICE_ACCOUNT
   ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
   : undefined;
 
-const STORAGE_BUCKET = 'eshipper-f56c3.appspot.com';
+const STORAGE_BUCKET = 'eshipper-f56c3.firebasestorage.app';
 const PROJECT_ID = 'eshipper-f56c3';
 initializeApp(firebaseConfig
   ? { credential: cert(firebaseConfig), storageBucket: STORAGE_BUCKET, projectId: PROJECT_ID }
