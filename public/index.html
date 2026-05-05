@@ -1609,7 +1609,7 @@ function renderSelfLog() {
           <label>Notes</label>
           <textarea name="notes" rows="2"></textarea>
         </div>
-        ${['admin','manager'].includes(state.user.role)?`<div class="toggle-row">
+        ${['admin','manager','office_support'].includes(state.user.role)?`<div class="toggle-row">
           <label class="toggle"><input type="checkbox" name="billable" checked/><span class="toggle-slider"></span></label>
           <span>Billable</span>
         </div>`:''}
@@ -1672,7 +1672,7 @@ function renderCreateJob() {
           <div id="cj-loc-csv-info" style="display:none;font-size:12px;color:var(--text-light);margin-bottom:8px"></div>
           <div id="cj-locations-list"></div>
         </div>
-        ${['admin','manager'].includes(state.user.role)?`<div class="toggle-row">
+        ${['admin','manager','office_support'].includes(state.user.role)?`<div class="toggle-row">
           <label class="toggle"><input type="checkbox" name="billable" checked/><span class="toggle-slider"></span></label>
           <span>Billable</span>
         </div>`:''}
@@ -3555,7 +3555,7 @@ async function submitSelfLog(e) {
   const fields = collectFields(form, getJobFields(jobTypeId));
   const body = {
     jobTypeId, customerId, fields,
-    billable: ['admin','manager'].includes(state.user.role) ? (form.billable?.checked ?? true) : true,
+    billable: ['admin','manager','office_support'].includes(state.user.role) ? (form.billable?.checked ?? true) : true,
     dueDate: form.dueDate.value || null,
     notes: form.notes.value,
   };
@@ -3764,7 +3764,7 @@ async function submitCreateJob(e) {
     customerId,
     fields: fieldVals,
     assignedManagerId: form.assignedManagerId.value || null,
-    billable: ['admin','manager'].includes(state.user.role) ? (form.billable?.checked ?? true) : true,
+    billable: ['admin','manager','office_support'].includes(state.user.role) ? (form.billable?.checked ?? true) : true,
     dueDate: form.dueDate.value || null,
     notes: form.notes.value,
     instructions: form.instructions.value,
