@@ -10,7 +10,7 @@ Internal warehouse operations management app for eShipper+. Manages warehouse jo
 - **Frontend**: Single-page app — vanilla JS, role-based rendering in `public/index.html`
 - **Database**: Firebase Firestore (`eshipper-f56c3`)
 - **Auth**: Firebase Auth (email/password + invite flow)
-- **Storage**: Firebase Storage (`eshipper-f56c3.firebasestorage.app`) — job photos + attachments
+- **Storage**: Firebase Storage (`eshipper-f56c3.appspot.com`) — job photos + attachments
 - **WMS**: Logiwa API v3.1 (`https://myapi.logiwa.com`)
 - **Email**: nodemailer + Gmail SMTP
 
