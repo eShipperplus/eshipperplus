@@ -2480,7 +2480,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
         packTypeIdentifier: packTypeId || undefined,
         sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
         lotBatchNumber: lotBatch || undefined,
-        expiryDate: expiry || undefined,
+        expiryDate: expiry ? new Date(expiry).toISOString().slice(0,10).replace(/-/g,'') : undefined,
         productionDate: productionDate || undefined,
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
