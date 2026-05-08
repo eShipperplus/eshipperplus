@@ -2477,6 +2477,8 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
       // Strip to minimum fields — Logiwa exact-matches ALL provided fields, extra ones cause mismatches
       const _fmtDate = d => { try { return d ? new Date(d).toISOString().slice(0,10).replace(/-/g,'') : undefined; } catch { return undefined; } };
       const transferPayload = {
+        clientIdentifier: clientId || undefined,
+        sourceWarehouseIdentifier: warehouseId || undefined,
         sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
         productIdentifier: productId || undefined,
         packTypeIdentifier: packTypeId || undefined,
