@@ -102,6 +102,11 @@ function _mapItem(item) {
     expiry: item.expiryDate,
     productionDate: item.productionDate || null,
     upc: item.productUpc,
+    lpn: item.licensePlateNumber || null,
+    lpnId: item.licensePlateIdentifier || null,
+    freeQty: item.freeQuantity ?? null,
+    allocatedQty: item.allocatedQuantity ?? null,
+    locationGroup: item.warehouseLocationGroupName || null,
   };
 }
 

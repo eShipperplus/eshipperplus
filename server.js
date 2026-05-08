@@ -2472,7 +2472,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     else if (type === 'adjust') result = await logiwa.adjustInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'transfer') {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
-      const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId, lotBatch, expiry, productionDate } = req.body;
+      const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId, lotBatch, expiry, productionDate, lpn, lpnId } = req.body;
       // Logiwa spec: packTypeIdentifier required; only one of locationIdentifier OR locationCode (not both)
       // Strip to minimum fields — Logiwa exact-matches ALL provided fields, extra ones cause mismatches
       const _fmtDate = d => { try { return d ? new Date(d).toISOString().slice(0,10).replace(/-/g,'') : undefined; } catch { return undefined; } };
@@ -2486,6 +2486,8 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
         quantity,
         ...(lotBatch ? { lotBatchNumber: lotBatch } : {}),
         ...(expiry   ? { expiryDate: _fmtDate(expiry) } : {}),
+        ...(lpnId  ? { sourceLicensePlateIdentifier: lpnId } : {}),
+        ...(lpn && !lpnId ? { sourceLicensePlateNumber: lpn } : {}),
       };
       console.log('[Logiwa transfer payload] ' + JSON.stringify(transferPayload));
       result = await logiwa.transferProduct(creds.email, creds.password, transferPayload);

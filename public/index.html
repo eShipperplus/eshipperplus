@@ -3264,7 +3264,9 @@ async function searchLogiwaInventory(jobId) {
           const avail = i.availQty ?? 0;
           const allocd = total - avail;
           // Show physical qty; note allocated separately so it's not confused with "no stock"
-          const qtyStr = avail < total ? `Qty: ${total} | Avail: ${avail}` : `Qty: ${total}`;
+          const qtyStr = (i.freeQty !== null && i.freeQty !== undefined) ?
+            (i.freeQty < (i.totalQty ?? 0) ? `Qty: ${i.totalQty} | Free: ${i.freeQty}` : `Qty: ${i.totalQty}`) :
+            (i.availQty < (i.totalQty ?? 0) ? `Qty: ${i.totalQty} | Avail: ${i.availQty}` : `Qty: ${i.totalQty}`);
           const meta  = [lot, exp, pack].filter(Boolean).join(' | ');
           const loc   = i.location || 'No location';
           return `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${loc} | ${qtyStr}${meta ? ' | ' + meta : ''}</option>`;
@@ -3350,6 +3352,8 @@ async function submitLogiwaMovement(jobId, locId) {
         packTypeId: itemData?.packTypeId,
         lotBatch: itemData?.lotBatch,
         expiry: itemData?.expiry,
+        lpn: itemData?.lpn,
+        lpnId: itemData?.lpnId,
         productionDate: itemData?.productionDate,
       }),
     });
