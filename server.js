@@ -2389,7 +2389,7 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
   }
 });
 
-// GET /api/logiwa/search — real-time SKU search, falls back to Firestore cache for full coverage
+// GET /api/logiwa/search — Firestore-first SKU search (instant), falls back to Logiwa real-time for unsynced items
 app.get('/api/logiwa/search', requireAuth, async (req, res) => {
   try {
     const { sku, clientId } = req.query;
@@ -2397,40 +2397,39 @@ app.get('/api/logiwa/search', requireAuth, async (req, res) => {
     const creds = await getLogiwaCreds(false);
     if (!creds) return res.status(400).json({ error: 'Logiwa not configured' });
 
-    // Real-time search against Logiwa API (covers first ~35k items)
-    let items = await logiwa.searchInventoryBySku(creds.email, creds.password, sku, clientId || null);
-    console.log('[Logiwa search] real-time:', items.length, 'for:', sku, '| clientId:', clientId||'none');
+    const skuSearch = sku.trim();
+    const skuLow = skuSearch.toLowerCase();
 
-    // Firestore cache fallback — searches all 33k+ synced items
-    if (items.length === 0) {
-      const skuSearch = sku.trim();
-      // Prefix range query (Firestore “starts with”)
-      const HIGH = skuSearch + String.fromCharCode(0xF8FF);
-      const snap = await db.collection('wh_logiwa_inventory')
-        .where('sku', '>=', skuSearch)
-        .where('sku', '<=', HIGH)
-        .limit(100)
+    // 1. Firestore cache first (instant ~200ms, covers all 33k+ items after auto-sync)
+    let items = [];
+    const HIGH = skuSearch + String.fromCharCode(0xF8FF);
+    let snap = await db.collection('wh_logiwa_inventory')
+      .where('sku', '>=', skuSearch)
+      .where('sku', '<=', HIGH)
+      .limit(200)
+      .get();
+    // Also try lowercase range in case stored differently
+    if (snap.empty) {
+      const skuLowHIGH = skuLow + String.fromCharCode(0xF8FF);
+      snap = await db.collection('wh_logiwa_inventory')
+        .where('sku', '>=', skuLow)
+        .where('sku', '<=', skuLowHIGH)
+        .limit(200)
         .get();
-      console.log('[Logiwa search] Firestore range:', snap.size, 'docs');
+    }
 
-      if (snap.size > 0) {
-        items = snap.docs.map(d => d.data());
-      } else {
-        // Try lowercase range in case SKU stored differently
-        const skuLow = skuSearch.toLowerCase();
-        const snap2 = await db.collection('wh_logiwa_inventory')
-          .where('sku', '>=', skuLow)
-          .where('sku', '<=', skuLow + String.fromCharCode(0xF8FF))
-          .limit(100)
-          .get();
-        console.log('[Logiwa search] Firestore lowercase range:', snap2.size, 'docs');
-        items = snap2.docs.map(d => d.data());
-      }
-      // Apply clientId filter in-memory — but only if it keeps results
+    if (!snap.empty) {
+      items = snap.docs.map(d => d.data())
+        .filter(i => i.sku && i.sku.toLowerCase().includes(skuLow));
       if (clientId && items.length > 0) {
         const filtered = items.filter(it => it.clientId === clientId.trim());
         items = filtered.length > 0 ? filtered : items;
       }
+      console.log('[Logiwa search] Firestore:', items.length, 'for:', skuSearch);
+    } else {
+      // 2. Firestore miss — inventory not synced yet, hit Logiwa real-time
+      items = await logiwa.searchInventoryBySku(creds.email, creds.password, skuSearch, clientId || null);
+      console.log('[Logiwa search] real-time fallback:', items.length, 'for:', skuSearch);
     }
 
     res.json({ items, count: items.length });
