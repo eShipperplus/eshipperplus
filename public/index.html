@@ -3176,9 +3176,6 @@ function openLogiwaMovementModal(jobId, locId, defaultSku, defaultMovementType='
         <div id="lgw-product-info" style="display:none;background:#f0f4ff;border:1px solid #c7d7f9;border-radius:6px;padding:10px 12px;margin-top:-8px;margin-bottom:12px;font-size:13px">
           <div id="lgw-product-name" style="font-weight:600;color:#1e3a8a;margin-bottom:4px"></div>
           <div id="lgw-product-barcode" style="color:#374151"></div>
-          <div id="lgw-avail-warn" style="display:none;margin-top:6px;padding:6px 8px;background:#fef3c7;border:1px solid #f59e0b;border-radius:4px;color:#92400e;font-size:12px">
-            ⚠️ <strong>All units on order (available qty = 0).</strong> Select a different record with free qty, or Logiwa will reject the transfer.
-          </div>
         </div>
       </div>
       <div class="form-row">
@@ -3267,7 +3264,7 @@ async function searchLogiwaInventory(jobId) {
           const avail = i.availQty ?? 0;
           const allocd = total - avail;
           // Show physical qty; note allocated separately so it's not confused with "no stock"
-          const qtyStr = allocd > 0 ? `Qty: ${total} (${allocd} on order)` : `Qty: ${total}`;
+          const qtyStr = avail < total ? `Qty: ${total} | Avail: ${avail}` : `Qty: ${total}`;
           const meta  = [lot, exp, pack].filter(Boolean).join(' | ');
           const loc   = i.location || 'No location';
           return `<option value="${i.inventoryId}" data-item="${encodeURIComponent(JSON.stringify(i))}">${i.sku} | ${loc} | ${qtyStr}${meta ? ' | ' + meta : ''}</option>`;
@@ -3298,9 +3295,6 @@ function updateLogiwaProductInfo() {
     if (!name && !upc) { infoEl.style.display = 'none'; return; }
     nameEl.textContent = name || '—';
     barcodeEl.innerHTML = upc ? `🔢 Barcode: <strong>${upc}</strong>` : 'No barcode on file';
-    // Show warning if all units are on order (availQty = 0)
-    const warnEl = document.getElementById('lgw-avail-warn');
-    if (warnEl) warnEl.style.display = (item.availQty === 0 && (item.totalQty ?? 0) > 0) ? '' : 'none';
     infoEl.style.display = '';
   } catch { infoEl.style.display = 'none'; }
 }
