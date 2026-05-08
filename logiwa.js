@@ -126,7 +126,7 @@ async function searchInventoryBySku(email, password, sku, clientId) {
   const token = await getToken(email, password);
   const skuLower = sku.trim().toLowerCase();
   const matches = [];
-  const MAX_PAGES = 20;   // up to 10k items — Firestore cache covers the rest
+  const MAX_PAGES = 40;   // up to 20k items — Firestore cache covers the rest
   const CONCURRENCY = 5;  // fetch 5 pages at once — more causes Logiwa rate limits
   let pageIndex = 0;
   let done = false;
