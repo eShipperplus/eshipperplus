@@ -2473,8 +2473,10 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
     else if (type === 'adjust') result = await logiwa.adjustInventory(creds.email, creds.password, inventoryId, quantity, jobNote);
     else if (type === 'transfer') {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
-      const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId } = req.body;
+      const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId, lotBatch, expiry, productionDate } = req.body;
       // Logiwa spec: packTypeIdentifier required; only one of locationIdentifier OR locationCode (not both)
+      // expiryDate must be yyyyMMdd format per Logiwa API
+      const _fmtDate = d => { try { return d ? new Date(d).toISOString().slice(0,10).replace(/-/g,'') : undefined; } catch { return undefined; } };
       const transferPayload = {
         clientIdentifier: clientId || undefined,
         sourceWarehouseIdentifier: warehouseId || undefined,
@@ -2483,6 +2485,9 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
         sourceWarehouseLocationIdentifier: sourceLocationId || undefined,
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
+        ...(lotBatch ? { lotBatchNumber: lotBatch } : {}),
+        ...(expiry   ? { expiryDate: _fmtDate(expiry) } : {}),
+        ...(productionDate ? { productionDate: _fmtDate(productionDate) } : {}),
       };
       console.log('[Logiwa transfer payload] ' + JSON.stringify(transferPayload));
       result = await logiwa.transferProduct(creds.email, creds.password, transferPayload);
