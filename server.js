@@ -2310,6 +2310,61 @@ app.post('/api/logiwa/sync/reset', requireAuth, requireRole('admin'), async (req
   res.json({ ok: true });
 });
 
+// ── Shared Logiwa full-sync logic (called by API route + auto-scheduler) ────
+async function _runLogiwaSync(filterClientId) {
+  const creds = await getLogiwaCreds();
+  if (!creds) throw new Error('Logiwa not configured');
+
+  await db.collection('wh_config').doc('logiwa').update({
+    syncStatus: 'running', syncStarted: Timestamp.now(),
+    syncClientId: filterClientId || null,
+  }).catch(() => {});
+
+  try {
+    const items = await logiwa.fetchAllInventory(creds.email, creds.password, async (count) => {
+      if (count % 1000 === 0) {
+        await db.collection('wh_config').doc('logiwa').update({ syncProgress: count, syncPhase: 'fetching' }).catch(() => {});
+      }
+    }, filterClientId);
+
+    await db.collection('wh_config').doc('logiwa').update({ syncPhase: 'writing', syncProgress: 0, syncTotal: items.length }).catch(() => {});
+
+    const BATCH_SIZE = 500;
+    const baseQuery = filterClientId
+      ? db.collection('wh_logiwa_inventory').where('clientId', '==', filterClientId)
+      : db.collection('wh_logiwa_inventory');
+    let snap;
+    do {
+      snap = await baseQuery.limit(500).get();
+      if (!snap.empty) {
+        const batch = db.batch();
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } while (!snap.empty);
+
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = db.batch();
+      items.slice(i, i + BATCH_SIZE).forEach(item => {
+        const ref = db.collection('wh_logiwa_inventory').doc(String(item.inventoryId));
+        batch.set(ref, { ...item, syncedAt: Timestamp.now() });
+      });
+      await batch.commit();
+      await db.collection('wh_config').doc('logiwa').update({ syncProgress: i + BATCH_SIZE }).catch(() => {});
+    }
+
+    await db.collection('wh_config').doc('logiwa').update({
+      syncStatus: 'done', lastSync: Timestamp.now(),
+      syncCount: items.length, syncProgress: items.length,
+    });
+    console.log();
+  } catch (err) {
+    console.error('[autoSync] Logiwa sync error:', err.message);
+    await db.collection('wh_config').doc('logiwa').update({ syncStatus: 'error', syncError: err.message }).catch(() => {});
+    throw err;
+  }
+}
+
 // POST /api/logiwa/sync — fetch inventory from Logiwa and cache in Firestore (admin only)
 // Optional body: { clientId: "xxx" } to sync only one client (fast, for testing)
 // This runs as a background job — returns immediately, writes progress to wh_config/logiwa
@@ -2327,60 +2382,8 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
     });
     res.json({ ok: true, message: filterClientId ? `Sync started for client ${filterClientId}` : 'Full sync started in background' });
 
-    // Run async
-    (async () => {
-      try {
-        const items = await logiwa.fetchAllInventory(creds.email, creds.password, async (count) => {
-          if (count % 1000 === 0) {
-            await db.collection('wh_config').doc('logiwa').update({ syncProgress: count, syncPhase: 'fetching' }).catch(() => {});
-          }
-        }, filterClientId);
-
-        // Switch to write phase
-        await db.collection('wh_config').doc('logiwa').update({ syncPhase: 'writing', syncProgress: 0, syncTotal: items.length }).catch(() => {});
-
-        const BATCH_SIZE = 500;
-
-        // Clear existing records for this client (or all for full sync)
-        // Must loop until empty — each .get() returns at most 500 docs
-        {
-          const baseQuery = filterClientId
-            ? db.collection('wh_logiwa_inventory').where('clientId', '==', filterClientId)
-            : db.collection('wh_logiwa_inventory');
-          let snap;
-          do {
-            snap = await baseQuery.limit(500).get();
-            if (!snap.empty) {
-              const batch = db.batch();
-              snap.docs.forEach(d => batch.delete(d.ref));
-              await batch.commit();
-            }
-          } while (!snap.empty);
-        }
-
-        // Write new inventory, reporting write progress
-        for (let i = 0; i < items.length; i += BATCH_SIZE) {
-          const batch = db.batch();
-          items.slice(i, i + BATCH_SIZE).forEach(item => {
-            const ref = db.collection('wh_logiwa_inventory').doc(String(item.inventoryId));
-            batch.set(ref, { ...item, syncedAt: Timestamp.now() });
-          });
-          await batch.commit();
-          await db.collection('wh_config').doc('logiwa').update({ syncProgress: i + BATCH_SIZE }).catch(() => {});
-        }
-
-        await db.collection('wh_config').doc('logiwa').update({
-          syncStatus: 'done',
-          lastSync: Timestamp.now(),
-          syncCount: items.length,
-          syncProgress: items.length,
-        });
-        console.log(`Logiwa sync complete: ${items.length} items${filterClientId ? ` (client ${filterClientId})` : ''}`);
-      } catch (err) {
-        console.error('Logiwa sync error:', err.message);
-        await db.collection('wh_config').doc('logiwa').update({ syncStatus: 'error', syncError: err.message }).catch(() => {});
-      }
-    })();
+    // Run async using shared sync function
+    _runLogiwaSync(filterClientId).catch(() => {});
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2554,10 +2557,43 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ─── Auto-sync Logiwa inventory every 2 hours ──────────────────────────────────
+// Runs as long as the server process is alive (Cloud Run keeps it warm with traffic)
+const AUTO_SYNC_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
+let _autoSyncRunning = false;
+
+async function _autoSync() {
+  if (_autoSyncRunning) { console.log('[autoSync] skipped — sync already in progress'); return; }
+  const creds = await getLogiwaCreds().catch(() => null);
+  if (!creds) { console.log('[autoSync] skipped — Logiwa not configured'); return; }
+  // Skip if a manual sync is already running
+  const doc = await db.collection('wh_config').doc('logiwa').get().catch(() => null);
+  if (doc && doc.data() && doc.data().syncStatus === 'running') {
+    console.log('[autoSync] skipped — manual sync in progress');
+    return;
+  }
+  _autoSyncRunning = true;
+  console.log('[autoSync] Starting scheduled Logiwa inventory sync...');
+  try {
+    await _runLogiwaSync(null);
+  } catch (e) {
+    console.error('[autoSync] Error:', e.message);
+  } finally {
+    _autoSyncRunning = false;
+  }
+}
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 if (require.main === module) {
   const PORT = process.env.PORT || 8080;
-  app.listen(PORT, () => console.log(`Warehouse Billing server listening on port ${PORT}`));
+  app.listen(PORT, () => {
+    console.log(`Warehouse Billing server listening on port ${PORT}`);
+    // Kick off first auto-sync 5 minutes after startup (lets server warm up)
+    setTimeout(_autoSync, 5 * 60 * 1000);
+    // Then repeat every 2 hours
+    setInterval(_autoSync, AUTO_SYNC_INTERVAL_MS);
+    console.log('[autoSync] Logiwa auto-sync scheduled: first run in 5 min, then every 2 hours');
+  });
 }
 
 module.exports = { app };
