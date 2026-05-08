@@ -2477,7 +2477,6 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
       // expiryDate must be yyyyMMdd format per Logiwa API
       const _fmtDate = d => { try { return d ? new Date(d).toISOString().slice(0,10).replace(/-/g,'') : undefined; } catch { return undefined; } };
       const transferPayload = {
-        inventoryIdentifier: inventoryId || undefined,
         clientIdentifier: clientId || undefined,
         sourceWarehouseIdentifier: warehouseId || undefined,
         productIdentifier: productId || undefined,
