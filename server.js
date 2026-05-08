@@ -2399,6 +2399,7 @@ app.get('/api/logiwa/search', requireAuth, async (req, res) => {
 
     // 1. Logiwa real-time search (covers first 10k items)
     let items = await logiwa.searchInventoryBySku(creds.email, creds.password, skuSearch, clientId || null);
+    console.log('[search] sku:', skuSearch, 'logiwa:', items.length);
 
     // 2. Firestore prefix fallback — covers full synced inventory
     if (items.length === 0) {
