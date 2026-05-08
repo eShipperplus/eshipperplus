@@ -126,7 +126,7 @@ async function searchInventoryBySku(email, password, sku, clientId) {
   const token = await getToken(email, password);
   const skuLower = sku.trim().toLowerCase();
   const matches = [];
-  const MAX_PAGES = 70;   // up to 35k items — covers full Logiwa inventory
+  const MAX_PAGES = 20;   // up to 10k items — Firestore cache covers the rest
   const CONCURRENCY = 5;  // fetch 5 pages at once — more causes Logiwa rate limits
   let pageIndex = 0;
   let done = false;
@@ -150,9 +150,6 @@ async function searchInventoryBySku(email, password, sku, clientId) {
         .map(_mapItem));
       if (r.body.data.length < INV_PAGE_SIZE) { done = true; break; }
     }
-
-    // Small pause between batches to avoid Logiwa rate limits on large scans
-    if (!done && pageIndex < MAX_PAGES) await new Promise(r => setTimeout(r, 150));
   }
   return matches;
 }
