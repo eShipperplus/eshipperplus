@@ -2386,7 +2386,7 @@ app.post('/api/logiwa/sync', requireAuth, requireRole('admin'), async (req, res)
   }
 });
 
-// GET /api/logiwa/search — parallel: Logiwa real-time (10k) + Firestore cache (all synced)
+// GET /api/logiwa/search — real-time SKU search with Firestore fallback
 app.get('/api/logiwa/search', requireAuth, async (req, res) => {
   try {
     const { sku, clientId } = req.query;
@@ -2397,33 +2397,19 @@ app.get('/api/logiwa/search', requireAuth, async (req, res) => {
     const skuSearch = sku.trim();
     const skuLower = skuSearch.toLowerCase();
 
-    // Run Logiwa real-time and Firestore prefix search in parallel for speed
-    const fsQuery = db.collection('wh_logiwa_inventory')
-      .where('sku', '>=', skuSearch)
-      .where('sku', '<=', skuSearch + '')
-      .limit(200);
+    // 1. Logiwa real-time search (covers first 10k items)
+    let items = await logiwa.searchInventoryBySku(creds.email, creds.password, skuSearch, clientId || null);
 
-    const [liveItems, fsSnap] = await Promise.all([
-      logiwa.searchInventoryBySku(creds.email, creds.password, skuSearch, clientId || null),
-      fsQuery.get(),
-    ]);
-
-    // Merge: Firestore (full coverage) + live (recent additions not yet synced)
-    const seen = new Set();
-    const items = [];
-
-    for (const doc of fsSnap.docs) {
-      const item = doc.data();
-      if (!item.sku || !item.sku.toLowerCase().includes(skuLower)) continue;
-      if (clientId && item.clientId !== clientId.trim()) continue;
-      seen.add(String(item.inventoryId));
-      items.push(item);
-    }
-    for (const item of liveItems) {
-      if (!seen.has(String(item.inventoryId))) {
-        if (clientId && item.clientId !== clientId.trim()) continue;
-        items.push(item);
-      }
+    // 2. Firestore prefix fallback — covers full synced inventory
+    if (items.length === 0) {
+      const snap = await db.collection('wh_logiwa_inventory')
+        .where('sku', '>=', skuSearch)
+        .where('sku', '<=', skuSearch + '')
+        .limit(200)
+        .get();
+      items = snap.docs.map(d => d.data())
+        .filter(i => i.sku && i.sku.toLowerCase().includes(skuLower));
+      if (clientId) items = items.filter(i => i.clientId === clientId.trim());
     }
 
     res.json({ items, count: items.length });
