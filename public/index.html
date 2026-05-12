@@ -4662,25 +4662,35 @@ function openAddTaskModal(jobId) {
       <div class="form-group">
         <label>Reference Info <span style="font-weight:400;color:var(--text-light)">(optional — e.g. SKU, PO#)</span></label>
         <div id="new-task-refs">
-          ${Object.keys(job.referenceDataTypes || {}).length
-            ? Object.entries(job.referenceDataTypes).map(([col, colType]) => {
-                const isDate = colType === 'date';
-                const isNum = colType === 'number';
-                return `<div class="field-row" style="margin-bottom:6px">
-                  <input type="text" value="${col}" readonly
-                    style="width:38%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#f7f7f7"/>
-                  <input type="${isDate ? 'date' : isNum ? 'number' : 'text'}"
-                    placeholder="${isDate ? 'YYYYMMDD' : 'Value'}"
-                    ${isDate ? '' : 'data-scan-target="1"'} data-ref-value="1"
-                    style="width:53%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
-                </div>`;
-              }).join('')
-            : `<div class="field-row" style="margin-bottom:6px">
+          ${(()=>{
+            // Use referenceDataTypes if set; otherwise infer from existing task referenceData keys
+            const colTypes = job.referenceDataTypes || {};
+            let cols = Object.entries(colTypes);
+            if (!cols.length) {
+              const keys = [...new Set((job.locations || []).flatMap(l => Object.keys(l.referenceData || {})))];
+              cols = keys.map(k => [k, isDateLabel(k) ? 'date' : 'text']);
+            }
+            if (!cols.length) {
+              return `<div class="field-row" style="margin-bottom:6px">
                 <input type="text" placeholder="Label (e.g. Expiry Date)" oninput="onTaskRefLabelChange(this)"
                   style="width:38%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
                 <input type="text" placeholder="Value" data-scan-target="1" data-ref-value="1"
                   style="width:53%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
-              </div>`}
+              </div>`;
+            }
+            return cols.map(([col, colType]) => {
+              const isDate = colType === 'date';
+              const isNum = colType === 'number';
+              return `<div class="field-row" style="margin-bottom:6px">
+                <input type="text" value="${col}" readonly
+                  style="width:38%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#f7f7f7"/>
+                <input type="${isDate ? 'date' : isNum ? 'number' : 'text'}"
+                  placeholder="${isDate ? 'YYYYMMDD' : 'Value'}"
+                  ${isDate ? '' : 'data-scan-target="1"'} data-ref-value="1"
+                  style="width:53%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off"/>
+              </div>`;
+            }).join('');
+          })()}
         </div>
         <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px" onclick="addNewTaskRefRow()">+ Add field</button>
       </div>
@@ -4763,7 +4773,7 @@ async function submitAddTask(jobId) {
   try {
     await apiFetch(`/api/jobs/${jobId}/locations`, {
       method: 'PUT',
-      body: JSON.stringify({ locations: [...existingLocs, newLoc] }),
+      body: JSON.stringify({ locations: [newLoc] }),
     });
     document.querySelector('.modal-overlay')?.remove();
     await loadData();

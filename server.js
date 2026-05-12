@@ -910,17 +910,19 @@ app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to modify tasks on this job' });
     }
     // Associates can only append NEW locations, not modify existing ones
+    let resolvedLocs = locations;
     if (!isManagerOrAbove && isAssignedAssoc) {
       const existingIds = new Set((job.locations || []).map(l => l.id));
       const modifiesExisting = locations.some(l => existingIds.has(l.id));
       if (modifiesExisting) {
         return res.status(403).json({ error: 'Associates can only add new tasks, not modify existing ones' });
       }
+      // Append only the new tasks to the existing list (preserve all existing)
+      resolvedLocs = [...(job.locations || []), ...locations.filter(l => !existingIds.has(l.id))];
     }
-
     // Merge assignments into existing locations (preserve status/notes)
     const existing = job.locations || [];
-    const merged = locations.map(l => {
+    const merged = resolvedLocs.map(l => {
       const prev = existing.find(e => e.id === l.id) || {};
       // New locations (not in existing) get sensible defaults
       return { status: 'pending', capturedData: {}, assocNotes: '', photos: [], ...prev, ...l };
