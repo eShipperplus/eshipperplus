@@ -440,7 +440,8 @@ document.getElementById('google-signin-btn').addEventListener('click', async () 
   try {
     await signInWithRedirect(firebaseAuth, googleProvider);
   } catch (e) {
-    showSigninError(e.message);
+    console.error('[Google sign-in error]', e.code, e.message);
+    showSigninError(`Error (${e.code}): ${e.message}`);
   }
 });
 
@@ -448,7 +449,8 @@ document.getElementById('google-signin-btn').addEventListener('click', async () 
 getRedirectResult(firebaseAuth).then(result => {
   // result is null if no redirect just happened — that's normal
 }).catch(e => {
-  if (e.code !== 'auth/popup-closed-by-user') showSigninError(e.message);
+  console.error('[Google redirect result error]', e.code, e.message);
+  showSigninError(`Error (${e.code}): ${e.message}`);
 });
 
 document.getElementById('signout-btn').addEventListener('click', async () => {
