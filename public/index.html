@@ -263,7 +263,7 @@ tr:hover td { background: #f0f4ff; }
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, browserLocalPersistence, setPersistence } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, browserLocalPersistence, setPersistence } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
 // ── Firebase Config — replace with your project's config ──
 const FIREBASE_CONFIG = {
@@ -438,10 +438,17 @@ document.getElementById('email-register-btn').addEventListener('click', async ()
 
 document.getElementById('google-signin-btn').addEventListener('click', async () => {
   try {
-    await signInWithPopup(firebaseAuth, googleProvider);
+    await signInWithRedirect(firebaseAuth, googleProvider);
   } catch (e) {
-    if (e.code !== 'auth/popup-closed-by-user') showSigninError(e.message);
+    showSigninError(e.message);
   }
+});
+
+// Handle the redirect result when the page reloads after Google sign-in
+getRedirectResult(firebaseAuth).then(result => {
+  // result is null if no redirect just happened — that's normal
+}).catch(e => {
+  if (e.code !== 'auth/popup-closed-by-user') showSigninError(e.message);
 });
 
 document.getElementById('signout-btn').addEventListener('click', async () => {
