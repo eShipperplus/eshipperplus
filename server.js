@@ -1537,8 +1537,17 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
     const locations = job.locations || [];
     if (!locations.length) return res.status(400).json({ error: 'This job has no locations' });
 
-    // Collect all reference data column names (union across all locations)
-    const refCols = [...new Set(locations.flatMap(l => Object.keys(l.referenceData || {})))];
+    // Collect all reference data column names — case-insensitive dedup so "Number of Cartons"
+    // and "number of cartons" (from manual Add Task entries) merge into the same column.
+    // First occurrence wins for the display header name.
+    const _refColsSeen = new Map(); // normalizedKey → displayName
+    locations.forEach(l => {
+      Object.keys(l.referenceData || {}).forEach(k => {
+        const norm = k.trim().toLowerCase();
+        if (!_refColsSeen.has(norm)) _refColsSeen.set(norm, k.trim());
+      });
+    });
+    const refCols = [..._refColsSeen.values()]; // display names in insertion order
 
     // Prefer CSV-defined capture fields (e.g. Lot, Expiry from CSV upload), fall back to job type fields
     let captureFields = [];
@@ -1554,19 +1563,26 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
     // Build rows
     const rows = locations.map(l => {
       const row = {};
-      // Fall back to SKU or flag clearly if location name is blank
       const refData = l.referenceData || {};
+      // Case-insensitive lookup for ref data values
+      const refLookup = {};
+      Object.entries(refData).forEach(([k, v]) => { refLookup[k.trim().toLowerCase()] = v; });
+
+      // Location column — fall back if blank
       const nameLabel = (l.name || '').trim();
       if (nameLabel) {
         row['Location'] = nameLabel;
-      } else if (refData['SKU']) {
-        row['Location'] = '[NO LOCATION] SKU: ' + refData['SKU'];
+      } else if (refLookup['sku']) {
+        row['Location'] = '[NO LOCATION] SKU: ' + refLookup['sku'];
       } else {
         row['Location'] = '[NO LOCATION]';
       }
-      refCols.forEach(col => { row[col] = refData[col] || ''; });
+
+      // Reference data columns — looked up case-insensitively
+      refCols.forEach(col => { row[col] = refLookup[col.toLowerCase()] ?? ''; });
       captureFields.forEach(f => { row[f.label] = (l.capturedData || {})[f.id] ?? ''; });
-      row['Status'] = l.status === 'done' ? 'Done' : 'Pending';
+      // Use 'Task Status' to avoid collision with inventory 'Status' ref data field (e.g. GOOD/DAMAGED)
+      row['Task Status'] = l.status === 'done' ? 'Done' : 'Pending';
       row['Assigned To'] = l.assignedAssocName || '';
       row['Completed At'] = l.completedAt ? new Date(l.completedAt._seconds * 1000).toLocaleString('en-CA') : '';
       row['Notes'] = l.assocNotes || '';
