@@ -1550,6 +1550,7 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
     // Build rows
     const rows = locations.map(l => {
       const row = {};
+      row['Location'] = l.name || '';
       refCols.forEach(col => { row[col] = (l.referenceData || {})[col] || ''; });
       captureFields.forEach(f => { row[f.label] = (l.capturedData || {})[f.id] ?? ''; });
       row['Status'] = l.status === 'done' ? 'Done' : 'Pending';

@@ -4782,7 +4782,7 @@ async function submitAddTask(jobId) {
   try {
     await apiFetch(`/api/jobs/${jobId}/locations`, {
       method: 'PUT',
-      body: JSON.stringify({ locations: [newLoc] }),
+      body: JSON.stringify({ locations: [...existingLocs, newLoc] }),
     });
     document.querySelector('.modal-overlay')?.remove();
     await loadData();
