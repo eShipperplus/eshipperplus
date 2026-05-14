@@ -3913,15 +3913,20 @@ async function openJobModal(jobId) {
         ${(job.locations||[]).map(l=>{
           const refEntries = Object.entries(l.referenceData||{}).filter(([,v])=>v);
           const capEntries = Object.entries(l.capturedData||{}).filter(([,v])=>v!==''&&v!=null);
+          // Split ref data: key fields (SKU, Product name, Barcode, LPN) shown prominently; rest inline
+          const keyFields = ['SKU','Product name','Barcode','LPN','PO Number','Receiving Date'];
+          const keyRef = refEntries.filter(([k])=>keyFields.some(f=>k.toLowerCase().includes(f.toLowerCase())));
+          const otherRef = refEntries.filter(([k])=>!keyFields.some(f=>k.toLowerCase().includes(f.toLowerCase())));
           return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;background:${l.status==='done'?'#f0fff4':'#fff'}">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-              <div style="font-weight:600;font-size:13px">${taskLabel(l)}${!l.name||!l.name.trim()?` <span style="font-size:10px;background:#fff3cd;color:#856404;padding:1px 5px;border-radius:4px;font-weight:500">no location</span>`:''}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${refEntries.length?'6px':'4px'}">
+              <div style="font-weight:700;font-size:13px;color:var(--primary)">${taskLabel(l)}${!l.name||!l.name.trim()?` <span style="font-size:10px;background:#fff3cd;color:#856404;padding:1px 5px;border-radius:4px;font-weight:500">no location</span>`:''}</div>
               <div style="display:flex;align-items:center;gap:8px">
                 ${l.status==='done'?'<span style="color:#276749;font-size:18px">✓</span>':'<span style="font-size:11px;color:var(--text-light)">Pending</span>'}
                 ${l.status==='done' && job.status!=='completed' ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="editDoneTask('${job.id}','${l.id}')">Edit</button>` : ''}
               </div>
             </div>
-            ${refEntries.length?`<div style="font-size:12px;color:var(--text-light);margin-bottom:4px">${refEntries.map(([k,v])=>`<span style="margin-right:10px"><strong>${k}:</strong> ${v}</span>`).join('')}</div>`:''}
+            ${keyRef.length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${keyRef.map(([k,v])=>`<span style="background:#ebf8ff;color:#2b6cb0;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">${k}: ${v}</span>`).join('')}</div>`:''}
+            ${otherRef.length?`<div style="font-size:12px;color:var(--text-light);margin-bottom:4px">${otherRef.map(([k,v])=>`<span style="margin-right:10px"><strong>${k}:</strong> ${v}</span>`).join('')}</div>`:''}
             <div style="font-size:11px;color:var(--text-light)">${l.assignedAssocName?`Assigned: <strong style="color:var(--text)">${l.assignedAssocName}</strong>`:'Unassigned'}</div>
             ${capEntries.length?`<div style="margin-top:6px;padding:6px;background:#ebf8ff;border-radius:5px;font-size:12px">${capEntries.map(([k,v])=>`<span style="margin-right:10px"><strong>${k.replace(/_/g,' ')}:</strong> ${v}</span>`).join('')}${l.assocNotes?` <span style="color:var(--text-light)">— ${l.assocNotes}</span>`:''}</div>`:(l.assocNotes?`<div style="font-size:11px;color:#276749;margin-top:3px">${l.assocNotes}</div>`:'')}
           </div>`;
