@@ -909,6 +909,10 @@ app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
     if (!isManagerOrAbove && !isAssignedAssoc) {
       return res.status(403).json({ error: 'Not authorized to modify tasks on this job' });
     }
+    // Reject any incoming location with a blank name (prevent invisible tasks)
+    const blankNames = locations.filter(l => !l.name || !l.name.trim());
+    if (blankNames.length) return res.status(400).json({ error: 'All tasks must have a name/location' });
+
     // Associates can only append NEW locations, not modify existing ones
     let resolvedLocs = locations;
     if (!isManagerOrAbove && isAssignedAssoc) {
@@ -1550,8 +1554,12 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
     // Build rows
     const rows = locations.map(l => {
       const row = {};
-      row['Location'] = l.name || '';
-      refCols.forEach(col => { row[col] = (l.referenceData || {})[col] || ''; });
+      // Fall back to SKU or first reference data value if location name is blank
+      const refData = l.referenceData || {};
+      const nameLabel = (l.name || '').trim();
+      row['Location'] = nameLabel || refData['SKU'] || Object.values(refData).find(v => v) || '';
+      if (!nameLabel) row['Location'] = '[NO LOCATION] ' + row['Location'];
+      refCols.forEach(col => { row[col] = refData[col] || ''; });
       captureFields.forEach(f => { row[f.label] = (l.capturedData || {})[f.id] ?? ''; });
       row['Status'] = l.status === 'done' ? 'Done' : 'Pending';
       row['Assigned To'] = l.assignedAssocName || '';

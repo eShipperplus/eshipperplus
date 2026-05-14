@@ -1482,7 +1482,7 @@ function renderMyJobs() {
               ${myLocs.length ? myLocs.map(l=>`
                 <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--grey)">
                   <div style="flex:1">
-                    <div style="font-size:13px;font-weight:600">${l.name}</div>
+                    <div style="font-size:13px;font-weight:600">${taskLabel(l)}${!l.name||!l.name.trim()?` <span style="font-size:10px;background:#fff3cd;color:#856404;padding:1px 5px;border-radius:4px;font-weight:500">no location</span>`:''}</div>
                     ${(()=>{const ref=Object.entries(l.referenceData||{}).filter(([,v])=>v);return ref.length?`<div style="font-size:11px;color:var(--text-light);margin-top:2px">${ref.map(([k,v])=>`${k}: ${v}`).join(' · ')}</div>`:l.instructions?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''})()}
                     ${l.status==='done'?`<div style="font-size:11px;color:#276749;margin-top:2px">✓ Done${l.assocNotes?' — '+l.assocNotes:''}</div>`:''}
                   </div>
@@ -3915,7 +3915,7 @@ async function openJobModal(jobId) {
           const capEntries = Object.entries(l.capturedData||{}).filter(([,v])=>v!==''&&v!=null);
           return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;background:${l.status==='done'?'#f0fff4':'#fff'}">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-              <div style="font-weight:600;font-size:13px">${l.name}</div>
+              <div style="font-weight:600;font-size:13px">${taskLabel(l)}${!l.name||!l.name.trim()?` <span style="font-size:10px;background:#fff3cd;color:#856404;padding:1px 5px;border-radius:4px;font-weight:500">no location</span>`:''}</div>
               <div style="display:flex;align-items:center;gap:8px">
                 ${l.status==='done'?'<span style="color:#276749;font-size:18px">✓</span>':'<span style="font-size:11px;color:var(--text-light)">Pending</span>'}
                 ${l.status==='done' && job.status!=='completed' ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="editDoneTask('${job.id}','${l.id}')">Edit</button>` : ''}
@@ -4498,7 +4498,7 @@ function showAssignLocationsModal(jobId) {
             style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:7px;padding:10px;margin-bottom:8px;background:${l.status==='done'?'#f0fff4':'#fff'}">
             <input type="checkbox" class="loc-check" style="width:16px;height:16px;flex-shrink:0" ${l.status==='done'?'disabled':''} onchange="updateSelectAllState()"/>
             <div style="flex:1;min-width:0">
-              <div style="font-weight:700;font-size:13px">${l.name}${l.status==='done'?' <span style="color:#276749;font-size:11px">✓ Done</span>':''}</div>
+              <div style="font-weight:700;font-size:13px">${taskLabel(l)}${!l.name||!l.name.trim()?` <span style="font-size:10px;background:#fff3cd;color:#856404;padding:1px 5px;border-radius:4px;font-weight:500">no location</span>`:''}${l.status==='done'?' <span style="color:#276749;font-size:11px">✓ Done</span>':''}</div>
               ${refHtml?`<div style="font-size:11px;color:var(--text-light);margin-top:2px">${refHtml}</div>`:''}
               ${l.instructions&&!refHtml?`<div style="font-size:11px;color:var(--text-light)">${l.instructions}</div>`:''}
             </div>
@@ -4712,6 +4712,16 @@ function openAddTaskModal(jobId) {
 }
 
 // Returns true if label looks like a date field
+// Returns the best display label for a task/location — falls back to SKU, first ref data, or generic
+function taskLabel(l) {
+  if (l.name && l.name.trim()) return l.name.trim();
+  const ref = l.referenceData || {};
+  if (ref.SKU) return ref.SKU;
+  const first = Object.values(ref).find(v => v && String(v).trim());
+  if (first) return String(first).trim();
+  return '(Unnamed task)';
+}
+
 function isDateLabel(label) {
   return /date|expir|exp\b|mfg|manufactur|best.?before|bb|born|dob/i.test(label);
 }
