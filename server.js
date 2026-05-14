@@ -1554,11 +1554,16 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
     // Build rows
     const rows = locations.map(l => {
       const row = {};
-      // Fall back to SKU or first reference data value if location name is blank
+      // Fall back to SKU or flag clearly if location name is blank
       const refData = l.referenceData || {};
       const nameLabel = (l.name || '').trim();
-      row['Location'] = nameLabel || refData['SKU'] || Object.values(refData).find(v => v) || '';
-      if (!nameLabel) row['Location'] = '[NO LOCATION] ' + row['Location'];
+      if (nameLabel) {
+        row['Location'] = nameLabel;
+      } else if (refData['SKU']) {
+        row['Location'] = '[NO LOCATION] SKU: ' + refData['SKU'];
+      } else {
+        row['Location'] = '[NO LOCATION]';
+      }
       refCols.forEach(col => { row[col] = refData[col] || ''; });
       captureFields.forEach(f => { row[f.label] = (l.capturedData || {})[f.id] ?? ''; });
       row['Status'] = l.status === 'done' ? 'Done' : 'Pending';
