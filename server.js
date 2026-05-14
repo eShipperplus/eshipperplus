@@ -909,8 +909,10 @@ app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
     if (!isManagerOrAbove && !isAssignedAssoc) {
       return res.status(403).json({ error: 'Not authorized to modify tasks on this job' });
     }
-    // Reject any incoming location with a blank name (prevent invisible tasks)
-    const blankNames = locations.filter(l => !l.name || !l.name.trim());
+    // Reject any NEWLY ADDED location with a blank name (don't block jobs that already have blank-name tasks)
+    const existingTaskIds = new Set((job.locations || []).map(l => l.id));
+    const newTasks = locations.filter(l => !existingTaskIds.has(l.id));
+    const blankNames = newTasks.filter(l => !l.name || !l.name.trim());
     if (blankNames.length) return res.status(400).json({ error: 'All tasks must have a name/location' });
 
     // Associates can only append NEW locations, not modify existing ones
@@ -1544,6 +1546,7 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
     locations.forEach(l => {
       Object.keys(l.referenceData || {}).forEach(k => {
         const norm = k.trim().toLowerCase();
+        if (norm === 'location') return; // skip — "Location" is its own top-level column; don't let refData overwrite it
         if (!_refColsSeen.has(norm)) _refColsSeen.set(norm, k.trim());
       });
     });
@@ -1568,7 +1571,7 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
       const refLookup = {};
       Object.entries(refData).forEach(([k, v]) => { refLookup[k.trim().toLowerCase()] = v; });
 
-      // Location column — fall back if blank
+      // Location column first — "location" key is excluded from refCols so it can't be overwritten
       const nameLabel = (l.name || '').trim();
       if (nameLabel) {
         row['Location'] = nameLabel;
@@ -1578,7 +1581,7 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
         row['Location'] = '[NO LOCATION]';
       }
 
-      // Reference data columns — looked up case-insensitively
+      // Reference data columns — looked up case-insensitively ("location" key excluded from refCols above)
       refCols.forEach(col => { row[col] = refLookup[col.toLowerCase()] ?? ''; });
       captureFields.forEach(f => { row[f.label] = (l.capturedData || {})[f.id] ?? ''; });
       // Use 'Task Status' to avoid collision with inventory 'Status' ref data field (e.g. GOOD/DAMAGED)
