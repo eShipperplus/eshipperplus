@@ -1676,11 +1676,16 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 
     _pick_cols = [("Order Code","shipmentordercode"),("Client","clientname"),("Urgency","UrgencyLevel"),("Age","AgeLabel"),("SLA","SLAStatus")]
     _pack_cols = _pick_cols
-    _sla_cols  = [("Order Code","shipmentordercode"),("Client","clientname"),("Order Type","ordertype"),("Urgency","UrgencyLevel"),("Age","AgeLabel"),("SLA","SLAStatus")]
+    _sla_cols  = [("Order Code","shipmentordercode"),("Client","clientname"),("Order Type","ordertype"),("Status","_queue"),("Urgency","UrgencyLevel"),("Age","AgeLabel")]
     _os_cols   = [("Order Code","shipmentordercode"),("Client","clientname"),("Status","orderstatus")]
     _td_cols   = [("Order Code","shipmentordercode"),("Client","clientname"),("Status","completionstatus")]
 
-    _all_qs = pd.concat([f for f in [all_pick,all_pack] if not f.empty],ignore_index=True) if any(not f.empty for f in [all_pick,all_pack]) else pd.DataFrame()
+    _qs_parts = []
+    if not all_pick.empty:
+        _pk = all_pick.copy(); _pk["_queue"] = "Pending Pick"; _qs_parts.append(_pk)
+    if not all_pack.empty:
+        _pa = all_pack.copy(); _pa["_queue"] = "Pending Pack"; _qs_parts.append(_pa)
+    _all_qs = pd.concat(_qs_parts, ignore_index=True) if _qs_parts else pd.DataFrame()
 
     kpi_data = {
         "open":         _modal_data(open_shortage_df[open_shortage_df["orderstatus"]=="Open"]  if not open_shortage_df.empty else pd.DataFrame(), _os_cols,  "Open Orders"),
@@ -1898,7 +1903,7 @@ body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'I
 .badge-info{{background:var(--color-info-light);color:var(--color-info)}}
 .empty{{color:var(--color-gray-500);font-style:italic;padding:.6rem 0;font-size:.82rem}}
 .table-note{{font-size:.7rem;color:var(--color-gray-500);margin-top:.3rem;text-align:right}}
-.modal-close-btn{{background:none;border:none;font-size:1.25rem;line-height:1;cursor:pointer;color:var(--color-gray-500);padding:.3rem .5rem;border-radius:.25rem;font-family:inherit;display:flex;align-items:center;justify-content:center}}
+.modal-close-btn{{position:absolute;top:.6rem;right:.75rem;z-index:20;background:none;border:none;font-size:1.2rem;line-height:1;cursor:pointer;color:var(--color-gray-500);padding:.3rem .45rem;border-radius:.25rem;font-family:inherit}}
 .modal-close-btn:hover{{background:var(--color-gray-100);color:var(--color-gray-900)}}
 </style>
 </head>
@@ -1914,10 +1919,10 @@ body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'I
 <div class="tab-content">{content}</div>
 <div class="modal fade" id="kpiModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content" style="border:1px solid #e6e7e8">
-      <div class="modal-header" style="background:#f8f8f9;border-bottom:1px solid #e6e7e8;padding:.75rem 1rem">
+    <div class="modal-content" style="border:1px solid #e6e7e8;position:relative">
+      <button type="button" class="modal-close-btn" data-bs-dismiss="modal" aria-label="Close">&#x2715;</button>
+      <div class="modal-header" style="background:#f8f8f9;border-bottom:1px solid #e6e7e8;padding:.75rem 2.5rem .75rem 1rem">
         <h6 class="modal-title fw-bold" id="kpiModalTitle" style="color:#16171a;font-size:.9rem"></h6>
-        <button type="button" class="modal-close-btn" data-bs-dismiss="modal" aria-label="Close">&#x2715;</button>
       </div>
       <div class="modal-body p-0" id="kpiModalBody"></div>
     </div>
