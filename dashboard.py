@@ -1176,9 +1176,9 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
     def kpi(val, lbl, color="#34368a", sub="", onclick=""):
         sub_h = f'<div class="kpi-sub">{esc(sub)}</div>' if sub else ""
         extra = ' class="kpi-card clickable" onclick="'+onclick+'"' if onclick else ' class="kpi-card"'
-        return (f'<div{extra}>'
+        return (f'<div{extra} style="border-top:3px solid {color}">'
                 f'<div class="kpi-label">{esc(lbl)}</div>'
-                f'<div class="kpi-value">{esc(str(val))}</div>'
+                f'<div class="kpi-value" style="color:{color}">{esc(str(val))}</div>'
                 f'{sub_h}</div>')
 
     def tbl(df, cols, urgency_col="UrgencyLevel", max_rows=500):
@@ -1704,8 +1704,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
   {kpi(td_fp,"Fully Picked Today","#22c55e",onclick="showKpi('picked_today')")}
   {kpi(tot_pack,"Pending Pack (Orders)","#0ea5e9",onclick="showKpi('pending_pack')")}
   {kpi(td_fa,"Fully Packed Today","#3b82f6",onclick="showKpi('packed_today')")}
-  {kpi(pp+ppa,"Past SLA (All)","#dc2626",onclick="showKpi('past_sla')")}
-  {kpi(bp+bpa,"Breaching SLA","#d97706",onclick="showKpi('breaching_sla')")}
+  {kpi(pp+ppa,"Past SLA (All)","#dc2626",sub=f"Pick: {pp}  |  Pack: {ppa}",onclick="showKpi('past_sla')")}
+  {kpi(bp+bpa,"Breaching SLA","#d97706",sub=f"Pick: {bp}  |  Pack: {bpa}",onclick="showKpi('breaching_sla')")}
 </div>
 <div style="margin-top:1.5rem">
   {hourly_section(hourly_df, baseline_df)}
@@ -1898,6 +1898,8 @@ body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'I
 .badge-info{{background:var(--color-info-light);color:var(--color-info)}}
 .empty{{color:var(--color-gray-500);font-style:italic;padding:.6rem 0;font-size:.82rem}}
 .table-note{{font-size:.7rem;color:var(--color-gray-500);margin-top:.3rem;text-align:right}}
+.modal-close-btn{{background:none;border:none;font-size:1.25rem;line-height:1;cursor:pointer;color:var(--color-gray-500);padding:.3rem .5rem;border-radius:.25rem;font-family:inherit;display:flex;align-items:center;justify-content:center}}
+.modal-close-btn:hover{{background:var(--color-gray-100);color:var(--color-gray-900)}}
 </style>
 </head>
 <body>
@@ -1915,7 +1917,7 @@ body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'I
     <div class="modal-content" style="border:1px solid #e6e7e8">
       <div class="modal-header" style="background:#f8f8f9;border-bottom:1px solid #e6e7e8;padding:.75rem 1rem">
         <h6 class="modal-title fw-bold" id="kpiModalTitle" style="color:#16171a;font-size:.9rem"></h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <button type="button" class="modal-close-btn" data-bs-dismiss="modal" aria-label="Close">&#x2715;</button>
       </div>
       <div class="modal-body p-0" id="kpiModalBody"></div>
     </div>
