@@ -1952,7 +1952,7 @@ function _renderKpiTable(key){{
     }}).join('');
     return'<tr>'+cells+'</tr>';
   }}).join('');
-  var closeBtn='<button onclick="bootstrap.Modal.getInstance(document.getElementById(\'kpiModal\')).hide()" style="flex-shrink:0;background:#fff;border:1px solid #d1d2d6;border-radius:.375rem;font-size:1.05rem;line-height:1;cursor:pointer;color:#5a5b63;padding:.3rem .6rem;font-weight:700" title="Close">&#x2715;</button>';
+  var closeBtn='<button onclick="closeKpiModal()" style="flex-shrink:0;background:#fff;border:1px solid #d1d2d6;border-radius:.375rem;font-size:1.05rem;line-height:1;cursor:pointer;color:#5a5b63;padding:.3rem .6rem;font-weight:700" title="Close">&#x2715;</button>';
   var stickyBar='<div style="position:sticky;top:0;z-index:50;background:#f8f8f9;border-bottom:2px solid #e6e7e8;padding:.7rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:1rem">'+
     '<span style="font-weight:700;font-size:.9rem;color:#16171a">'+d.title+' ('+d.rows.length+' orders)</span>'+
     closeBtn+'</div>';
@@ -1966,6 +1966,10 @@ function _sortKpi(key,col){{
   var st=_kpiState[key]||{{col:-1,asc:true}};
   _kpiState[key]={{col:col,asc:st.col===col?!st.asc:true}};
   _renderKpiTable(key);
+}}
+function closeKpiModal(){{
+  var m=bootstrap.Modal.getInstance(document.getElementById('kpiModal'));
+  if(m) m.hide();
 }}
 function showKpi(key){{
   var d=KPI_DATA[key];if(!d)return;
