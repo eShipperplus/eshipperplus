@@ -1165,20 +1165,21 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         return int((df[col] == val).sum())
 
     def badge(level):
-        c = {"Past SLA":"#dc2626","Breaching SLA":"#d97706","On Track":"#16a34a"}.get(str(level),"#6b7280")
-        return f'<span class="badge" style="background:{c};color:#fff">{esc(level)}</span>'
+        cls = {"Past SLA":"badge-error","Breaching SLA":"badge-warning","On Track":"badge-success"}.get(str(level),"badge-neutral")
+        return f'<span class="badge {cls}">{esc(level)}</span>'
 
     def row_bg(level):
-        return {"Past SLA":"background:rgba(220,38,38,0.14);",
-                "Breaching SLA":"background:rgba(217,119,6,0.14);",
-                "On Track":"background:rgba(22,163,74,0.07);"}.get(str(level),"")
+        return {"Past SLA":"background:rgba(200,52,74,0.08);",
+                "Breaching SLA":"background:rgba(212,137,16,0.08);",
+                "On Track":"background:rgba(47,158,111,0.06);"}.get(str(level),"")
 
-    def kpi(val, lbl, color="#3b82f6", sub="", onclick=""):
+    def kpi(val, lbl, color="#34368a", sub="", onclick=""):
         sub_h = f'<div class="kpi-sub">{esc(sub)}</div>' if sub else ""
         extra = ' class="kpi-card clickable" onclick="'+onclick+'"' if onclick else ' class="kpi-card"'
-        return (f'<div{extra} style="border-top:3px solid {color}">'
-                f'<div class="kpi-val" style="color:{color}">{esc(str(val))}</div>'
-                f'<div class="kpi-lbl">{esc(lbl)}</div>{sub_h}</div>')
+        return (f'<div{extra}>'
+                f'<div class="kpi-label">{esc(lbl)}</div>'
+                f'<div class="kpi-value">{esc(str(val))}</div>'
+                f'{sub_h}</div>')
 
     def tbl(df, cols, urgency_col="UrgencyLevel", max_rows=500):
         if df.empty: return '<p class="empty">No records.</p>'
@@ -1192,9 +1193,9 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                 v = r.get(c,"")
                 if c == urgency_col: cells.append(f"<td>{badge(v)}</td>")
                 elif c == "PackToday" and str(v).startswith("\u2705"):
-                    cells.append('<td><span class="badge" style="background:#0ea5e9;color:#fff">Pack Today</span></td>')
+                    cells.append('<td><span class="badge badge-info">Pack Today</span></td>')
                 elif c == "pickingtype" and str(v) == "Locus (Robot)":
-                    cells.append('<td><span class="badge" style="background:#8b5cf6;color:#fff">Locus</span></td>')
+                    cells.append('<td><span class="badge badge-neutral" style="background:#ede9fe;color:#5b21b6">Locus</span></td>')
                 else: cells.append(f"<td>{esc(v)}</td>")
             rows.append(f'<tr style="{row_bg(lvl)}">{"".join(cells)}</tr>')
         note = f'<p class="table-note">Showing top {max_rows} of {len(df)}</p>' if len(df) > max_rows else ""
@@ -1215,8 +1216,8 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         hdr = "<tr><th>Client</th><th>Pri</th><th>Total</th><th>Past SLA</th><th>Breaching</th><th>On Track</th></tr>"
         rows = []
         for _, r in grp.iterrows():
-            ps = f'<span style="color:#dc2626;font-weight:700">{int(r.PastSLA)}</span>' if r.PastSLA > 0 else "0"
-            br = f'<span style="color:#d97706;font-weight:700">{int(r.Breaching)}</span>' if r.Breaching > 0 else "0"
+            ps = f'<span style="color:#c8344a;font-weight:700">{int(r.PastSLA)}</span>' if r.PastSLA > 0 else "0"
+            br = f'<span style="color:#d48910;font-weight:700">{int(r.Breaching)}</span>' if r.Breaching > 0 else "0"
             rows.append(f"<tr><td>{esc(r.clientname)}</td><td>{int(r.Priority)}</td>"
                         f"<td>{int(r.Total)}</td><td>{ps}</td><td>{br}</td><td>{int(r.OnTrack)}</td></tr>")
         title = f'<p class="pivot-title">{esc(label)}</p>' if label else ""
@@ -1242,12 +1243,12 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
               "options:{"
                 "indexAxis:'y',responsive:true,"
                 "plugins:{"
-                  "legend:{position:'bottom',labels:{color:'#94a3b8',font:{size:11}}},"
+                  "legend:{position:'bottom',labels:{color:'#75767e',font:{size:11}}},"
                   "tooltip:{callbacks:{label:function(c){return c.dataset.label+': '+c.raw+' orders';}}}"
                 "},"
                 "scales:{"
-                  "x:{stacked:true,ticks:{color:'#64748b'},grid:{color:'rgba(0,0,0,0.06)'},beginAtZero:true},"
-                  "y:{stacked:true,ticks:{color:'#94a3b8',font:{size:12}},grid:{display:false}}"
+                  "x:{stacked:true,ticks:{color:'#5a5b63'},grid:{color:'rgba(0,0,0,0.06)'},beginAtZero:true},"
+                  "y:{stacked:true,ticks:{color:'#75767e',font:{size:12}},grid:{display:false}}"
                 "}"
               "}"
             "});})();"
@@ -1295,10 +1296,10 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
   <div class="section-title" style="margin:0">Today \u2014 Hourly Breakdown</div>
   <select id="clientSel" onchange="updateHourly(this.value)"
-    style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;border-radius:6px;padding:.3rem .7rem;font-size:.82rem;cursor:pointer">
+    style="background:#f1f1f3;color:#16171a;border:1px solid #d1d2d6;border-radius:6px;padding:.3rem .7rem;font-size:.82rem;cursor:pointer">
     {opts}
   </select>
-  <span style="font-size:.75rem;color:#64748b">&#9643; Dashed = 45-day weekday 90th percentile target</span>
+  <span style="font-size:.75rem;color:#75767e">&#9643; Dashed = 45-day weekday 90th percentile target</span>
 </div>
 <div class="chart-box wide" style="margin-bottom:1rem;height:300px;position:relative">
   <canvas id="hourlyBar"></canvas>
@@ -1361,20 +1362,20 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       maintainAspectRatio: false,
       interaction: {{mode:'index', intersect:false}},
       plugins: {{
-        legend: {{labels: {{color:'#64748b', boxWidth:12, font:{{size:11}}}}}},
+        legend: {{labels: {{color:'#75767e', boxWidth:12, font:{{size:11}}}}}},
         datalabels: {{
           display: function(ctx) {{ return ctx.datasetIndex < 2 && ctx.raw > 0; }},
           anchor: 'top',
           align: 'top',
-          color: '#334155',
+          color: '#5a5b63',
           font: {{size:9, weight:'600'}},
           formatter: function(value) {{ return value; }},
           offset: 2
         }}
       }},
       scales: {{
-        x: {{ticks:{{color:'#64748b',font:{{size:9}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}}},
-        y: {{ticks:{{color:'#64748b',font:{{size:10}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}, beginAtZero:true}}
+        x: {{ticks:{{color:'#75767e',font:{{size:9}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}}},
+        y: {{ticks:{{color:'#75767e',font:{{size:10}}}}, grid:{{color:'rgba(0,0,0,0.06)'}}, beginAtZero:true}}
       }}
     }}
   }});
@@ -1474,9 +1475,9 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
         tpa = _tgt_series(tgt_pa_val)
         has_tgt = tgt_mode is not None
         if tgt_mode == "vol":
-            tgt_note = f' <span style="font-size:0.75rem;color:#64748b">(target = {tgt_pk_val:.0%} of daily volume · p75 of last 45d weekdays)</span>'
+            tgt_note = f' <span style="font-size:0.75rem;color:#75767e">(target = {tgt_pk_val:.0%} of daily volume · p75 of last 45d weekdays)</span>'
         elif tgt_mode == "flat":
-            tgt_note = f' <span style="font-size:0.75rem;color:#64748b">(target = p75 of last 45d weekdays · {round(tgt_pk_val):,} pick / {round(tgt_pa_val):,} pack)</span>'
+            tgt_note = f' <span style="font-size:0.75rem;color:#75767e">(target = p75 of last 45d weekdays · {round(tgt_pk_val):,} pick / {round(tgt_pa_val):,} pack)</span>'
         else:
             tgt_note = ""
 
@@ -1505,9 +1506,9 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
   new Chart(document.getElementById("tMain").getContext("2d"),{{type:"line",
     data:{{labels:L,datasets:mainDs}},
     options:{{responsive:true,interaction:{{mode:"index",intersect:false}},
-      plugins:{{legend:{{labels:{{color:"#94a3b8",boxWidth:12}}}}}},
-      scales:{{x:{{ticks:{{color:"#64748b",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(0,0,0,0.06)"}}}},
-               y:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}
+      plugins:{{legend:{{labels:{{color:"#75767e",boxWidth:12}}}}}},
+      scales:{{x:{{ticks:{{color:"#5a5b63",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(0,0,0,0.06)"}}}},
+               y:{{ticks:{{color:"#5a5b63"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}
     }}}});
   new Chart(document.getElementById("tType").getContext("2d"),{{type:"bar",
     data:{{labels:L,datasets:[
@@ -1515,9 +1516,9 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
       {{label:"SPD",data:{spd},backgroundColor:"rgba(14,165,233,0.7)",stack:"s"}},
       {{label:"LTL",data:{ltl},backgroundColor:"rgba(249,115,22,0.7)",stack:"s"}}
     ]}},options:{{responsive:true,interaction:{{mode:"index",intersect:false}},
-      plugins:{{legend:{{labels:{{color:"#94a3b8"}}}}}},
-      scales:{{x:{{stacked:true,ticks:{{color:"#64748b",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(0,0,0,0.06)"}}}},
-               y:{{stacked:true,ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}
+      plugins:{{legend:{{labels:{{color:"#75767e"}}}}}},
+      scales:{{x:{{stacked:true,ticks:{{color:"#5a5b63",maxRotation:45,font:{{size:10}}}},grid:{{color:"rgba(0,0,0,0.06)"}}}},
+               y:{{stacked:true,ticks:{{color:"#5a5b63"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}
     }}}});
 }})();</script>"""
 
@@ -1542,9 +1543,9 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                 f'data:{{labels:{lbl},datasets:[{{label:"Picked",data:{pkv},backgroundColor:"rgba(34,197,94,0.75)",borderRadius:4}},'
                 f'{{label:"Packed",data:{pav},backgroundColor:"rgba(59,130,246,0.75)",borderRadius:4}}]}},'
                 f'options:{{responsive:true,interaction:{{mode:"index",intersect:false}},'
-                f'plugins:{{legend:{{labels:{{color:"#94a3b8"}}}}}},'
-                f'scales:{{x:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}}}},'
-                f'y:{{ticks:{{color:"#64748b"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}}}}}}})();</script>')
+                f'plugins:{{legend:{{labels:{{color:"#75767e"}}}}}},'
+                f'scales:{{x:{{ticks:{{color:"#5a5b63"}},grid:{{color:"rgba(0,0,0,0.06)"}}}},'
+                f'y:{{ticks:{{color:"#5a5b63"}},grid:{{color:"rgba(0,0,0,0.06)"}},beginAtZero:true}}}}}}}}}})();</script>')
 
     # ── Aggregate ─────────────────────────────────────────────────────────────
     frames_pick = [f for f in [d2c_pick,spd_pick,ltl_pick] if not f.empty]
@@ -1776,7 +1777,7 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
                 "allocationdate":"Allocated","UrgencyLevel":"Was Urgency","AgeLabel":"Age"}
         detail_rows = "".join(
             "<tr>" + "".join(
-                f'<td><span class="badge" style="background:#f59e0b;color:#fff">{esc(str(r.get(c,"") or ""))}</span></td>'
+                f'<td><span class="badge badge-warning">{esc(str(r.get(c,"") or ""))}</span></td>'
                 if c == "UrgencyLevel" else
                 f'<td>{esc(str(r.get(c,"") or ""))}</td>'
                 for c in vis
@@ -1833,66 +1834,87 @@ def _generate_html(d2c_pack, d2c_pick, spd_pack, spd_pick,
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WMS Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <style>
+:root{{
+  --color-primary:#34368a;--color-primary-hover:#2a2c70;--color-primary-light:#e8e9f3;
+  --color-secondary:#62c0ae;--color-secondary-light:#e0f3ee;
+  --color-gray-50:#f8f8f9;--color-gray-100:#f1f1f3;--color-gray-200:#e6e7e8;
+  --color-gray-300:#d1d2d6;--color-gray-500:#75767e;--color-gray-600:#5a5b63;--color-gray-900:#16171a;
+  --color-success:#2f9e6f;--color-success-light:#e3f5ec;
+  --color-warning:#d48910;--color-warning-light:#fdf3dc;
+  --color-error:#c8344a;--color-error-light:#fbe6e9;
+  --color-info:#2b6cb0;--color-info-light:#e1ecf7;
+  --height-topnav:64px;
+}}
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#f1f5f9;color:#1e293b;font-family:"Segoe UI",system-ui,sans-serif;font-size:.875rem}}
-.topbar{{background:#ffffff;border-bottom:1px solid #e2e8f0;padding:.6rem 1.4rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;box-shadow:0 1px 4px rgba(0,0,0,0.06)}}
-.topbar h1{{font-size:1rem;font-weight:700;color:#0f172a}}
-.topbar .meta{{color:#64748b;font-size:.8rem}} .topbar .meta strong{{color:#475569}}
-#cd{{color:#16a34a;font-weight:700}}
-.nav-tabs{{background:#ffffff;border-bottom:1px solid #e2e8f0;padding:0 1rem;overflow-x:auto;flex-wrap:nowrap;display:flex}}
-.nav-tabs .nav-link{{color:#64748b;border:none;border-bottom:2px solid transparent;padding:.5rem .85rem;font-size:.8rem;white-space:nowrap}}
-.nav-tabs .nav-link.active{{color:#1e293b;border-bottom-color:#3b82f6;background:transparent;font-weight:600}}
-.nav-tabs .nav-link:hover{{color:#334155}}
-.cnt{{background:#e2e8f0;color:#475569;font-size:.68rem;padding:.1em .45em;border-radius:10px;margin-left:.3rem}}
+body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'Inter',-apple-system,sans-serif;font-size:.875rem;padding-top:var(--height-topnav)}}
+.topnav{{position:fixed;top:0;left:0;right:0;height:var(--height-topnav);background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;z-index:1200;box-shadow:0 2px 8px rgba(22,23,26,0.18)}}
+.topnav-left{{display:flex;align-items:center;gap:1rem}}
+.topnav-logo{{color:#fff;font-size:1.125rem;font-weight:700;letter-spacing:-.01em}}
+.topnav-app-name{{font-size:.875rem;font-weight:500;color:rgba(255,255,255,0.85);padding-left:1rem;border-left:1px solid rgba(255,255,255,0.2)}}
+.topnav-meta{{color:rgba(255,255,255,0.75);font-size:.8rem}}
+.topnav-meta strong{{color:#fff}}
+#cd{{color:#62c0ae;font-weight:700}}
+.nav-tabs{{background:#ffffff;border-bottom:1px solid var(--color-gray-200);padding:0 1rem;overflow-x:auto;flex-wrap:nowrap;display:flex}}
+.nav-tabs .nav-link{{color:var(--color-gray-500);border:none;border-bottom:2px solid transparent;padding:.5rem .85rem;font-size:.8rem;white-space:nowrap}}
+.nav-tabs .nav-link.active{{color:var(--color-primary);border-bottom-color:var(--color-primary);background:transparent;font-weight:600}}
+.nav-tabs .nav-link:hover{{color:var(--color-gray-900)}}
+.cnt{{background:var(--color-gray-100);color:var(--color-gray-600);font-size:.68rem;padding:.1em .45em;border-radius:10px;margin-left:.3rem}}
 .tab-inner{{padding:1.4rem 1.2rem}}
-.kpi-row{{display:flex;gap:.9rem;flex-wrap:wrap;margin-bottom:.8rem}}
-.kpi-card{{background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:1.1rem 1.4rem;min-width:130px;flex:1;box-shadow:0 1px 3px rgba(0,0,0,0.05)}}
+.kpi-row{{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}}
+.kpi-card{{background:#ffffff;border:1px solid var(--color-gray-200);border-radius:.5rem;padding:1.25rem;min-width:130px;flex:1;box-shadow:0 1px 3px rgba(22,23,26,0.08)}}
 .kpi-card.clickable{{cursor:pointer;transition:box-shadow .15s,transform .1s}}
-.kpi-card.clickable:hover{{box-shadow:0 4px 14px rgba(0,0,0,0.12);transform:translateY(-2px)}}
-.kpi-val{{font-size:2.1rem;font-weight:800;line-height:1.1}}
-.kpi-lbl{{font-size:.72rem;color:#64748b;margin-top:.3rem;text-transform:uppercase;letter-spacing:.06em}}
-.kpi-sub{{font-size:.72rem;color:#94a3b8;margin-top:.2rem}}
-.section-title{{font-size:.78rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.6rem;padding-bottom:.3rem;border-bottom:1px solid #e2e8f0}}
+.kpi-card.clickable:hover{{box-shadow:0 4px 14px rgba(22,23,26,0.12);transform:translateY(-2px)}}
+.kpi-label{{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.025em;color:var(--color-gray-500);margin-bottom:.5rem}}
+.kpi-value{{font-size:1.875rem;font-weight:700;color:var(--color-gray-900);line-height:1.2;font-variant-numeric:tabular-nums}}
+.kpi-sub{{font-size:.72rem;color:var(--color-gray-500);margin-top:.2rem}}
+.section-title{{font-size:.78rem;font-weight:700;color:var(--color-gray-500);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.6rem;padding-bottom:.3rem;border-bottom:1px solid var(--color-gray-200)}}
 .chart-row{{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}}
-.chart-box{{background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.2rem;flex:1;min-width:250px;box-shadow:0 1px 3px rgba(0,0,0,0.05)}}
+.chart-box{{background:#ffffff;border:1px solid var(--color-gray-200);border-radius:.5rem;padding:1rem 1.2rem;flex:1;min-width:250px;box-shadow:0 1px 3px rgba(22,23,26,0.08)}}
 .chart-box.wide{{flex:2;min-width:380px}}
-.chart-title{{font-size:.73rem;font-weight:600;color:#64748b;margin-bottom:.6rem;text-transform:uppercase;letter-spacing:.05em}}
+.chart-title{{font-size:.73rem;font-weight:600;color:var(--color-gray-500);margin-bottom:.6rem;text-transform:uppercase;letter-spacing:.05em}}
 .pivot-row{{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}}
 .pivot-col{{flex:1;min-width:280px}}
-.pivot-title{{font-size:.73rem;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem}}
-.tbl-wrap{{overflow-x:auto;border-radius:8px;border:1px solid #e2e8f0}}
-.qtable{{width:100%;border-collapse:collapse;background:#ffffff}}
-.qtable thead th{{background:#f8fafc;color:#64748b;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;padding:.5rem .65rem;border-bottom:1px solid #e2e8f0;white-space:nowrap;position:sticky;top:0}}
-.qtable tbody td{{padding:.4rem .65rem;border-bottom:1px solid #f1f5f9;vertical-align:middle;white-space:nowrap;color:#334155}}
+.pivot-title{{font-size:.73rem;font-weight:600;color:var(--color-gray-500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem}}
+.tbl-wrap{{overflow-x:auto;border-radius:.5rem;border:1px solid var(--color-gray-200)}}
+.qtable{{width:100%;border-collapse:collapse;background:#ffffff;font-size:.875rem}}
+.qtable thead th{{background:var(--color-gray-100);color:var(--color-gray-600);font-size:.75rem;text-transform:uppercase;letter-spacing:.025em;font-weight:600;padding:.75rem 1rem;border-bottom:1px solid var(--color-gray-300);white-space:nowrap;position:sticky;top:0}}
+.qtable tbody td{{padding:.75rem 1rem;border-bottom:1px solid var(--color-gray-200);vertical-align:middle;white-space:nowrap;color:var(--color-gray-900)}}
 .qtable tbody tr:last-child td{{border-bottom:none}}
-.qtable tbody tr:hover{{background:#f8fafc}}
-.badge{{font-size:.69rem;font-weight:600;padding:.2em .5em;border-radius:4px}}
-.empty{{color:#94a3b8;font-style:italic;padding:.6rem 0;font-size:.82rem}}
-.table-note{{font-size:.7rem;color:#94a3b8;margin-top:.3rem;text-align:right}}
+.qtable tbody tr:hover{{background:var(--color-gray-100)}}
+.badge{{display:inline-flex;align-items:center;gap:.25rem;padding:.25rem .5rem;border-radius:9999px;font-size:.75rem;font-weight:600}}
+.badge::before{{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}}
+.badge-success{{background:var(--color-success-light);color:var(--color-success)}}
+.badge-warning{{background:var(--color-warning-light);color:#a86d0a}}
+.badge-error{{background:var(--color-error-light);color:var(--color-error)}}
+.badge-neutral{{background:var(--color-gray-100);color:#3f4047}}
+.badge-info{{background:var(--color-info-light);color:var(--color-info)}}
+.empty{{color:var(--color-gray-500);font-style:italic;padding:.6rem 0;font-size:.82rem}}
+.table-note{{font-size:.7rem;color:var(--color-gray-500);margin-top:.3rem;text-align:right}}
 </style>
 </head>
 <body>
-<div class="topbar">
-  <div style="display:flex;align-items:center;gap:.85rem">
-    <div style="line-height:1.2">
-      <div style="font-size:1.2rem;font-weight:800;color:#1d4ed8;letter-spacing:-.02em">eShipper<span style="color:#0ea5e9">+</span></div>
-      <div style="font-size:.75rem;font-weight:700;color:#334155;letter-spacing:.08em;text-transform:uppercase">WMS Dashboard</div>
-    </div>
+<header class="topnav">
+  <div class="topnav-left">
+    <div class="topnav-logo">eShipper<span style="color:#62c0ae">+</span></div>
+    <span class="topnav-app-name">WMS Dashboard</span>
   </div>
-  <div class="meta">Last updated: <strong>{ts}</strong>&nbsp;&nbsp;Refreshes in <strong><span id="cd"></span></strong></div>
-</div>
+  <div class="topnav-meta">Last updated: <strong>{ts}</strong>&nbsp;&nbsp;Refreshes in <strong><span id="cd"></span></strong></div>
+</header>
 <ul class="nav nav-tabs">{nav}</ul>
 <div class="tab-content">{content}</div>
 <div class="modal fade" id="kpiModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content" style="border:1px solid #e2e8f0">
-      <div class="modal-header" style="background:#f8fafc;border-bottom:1px solid #e2e8f0;padding:.75rem 1rem">
-        <h6 class="modal-title fw-bold" id="kpiModalTitle" style="color:#1e293b;font-size:.9rem"></h6>
+    <div class="modal-content" style="border:1px solid #e6e7e8">
+      <div class="modal-header" style="background:#f8f8f9;border-bottom:1px solid #e6e7e8;padding:.75rem 1rem">
+        <h6 class="modal-title fw-bold" id="kpiModalTitle" style="color:#16171a;font-size:.9rem"></h6>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body p-0" id="kpiModalBody"></div>
@@ -1905,7 +1927,7 @@ var _kpiState={{}};
 function _renderKpiTable(key){{
   var d=KPI_DATA[key];
   var st=_kpiState[key]||{{col:-1,asc:true}};
-  var urg={{"Past SLA":"#dc2626","Breaching SLA":"#d97706","On Track":"#16a34a"}};
+  var urg={{"Past SLA":"badge-error","Breaching SLA":"badge-warning","On Track":"badge-success"}};
   var rows=d.rows.slice();
   if(st.col>=0){{
     rows.sort(function(a,b){{
@@ -1922,8 +1944,8 @@ function _renderKpiTable(key){{
   var tb=rows.map(function(r){{
     var cells=r.map(function(v,i){{
       if(d.cols[i]==='Urgency'){{
-        var col=urg[v]||'#64748b';
-        return'<td><span class="badge" style="background:'+col+';color:#fff">'+v+'</span></td>';
+        var cls=urg[v]||'badge-neutral';
+        return'<td><span class="badge '+cls+'">'+v+'</span></td>';
       }}
       return'<td>'+v+'</td>';
     }}).join('');
