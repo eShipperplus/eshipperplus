@@ -1903,8 +1903,8 @@ body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'I
 .badge-info{{background:var(--color-info-light);color:var(--color-info)}}
 .empty{{color:var(--color-gray-500);font-style:italic;padding:.6rem 0;font-size:.82rem}}
 .table-note{{font-size:.7rem;color:var(--color-gray-500);margin-top:.3rem;text-align:right}}
-.modal-close-btn{{position:absolute;top:.6rem;right:.75rem;z-index:20;background:none;border:none;font-size:1.2rem;line-height:1;cursor:pointer;color:var(--color-gray-500);padding:.3rem .45rem;border-radius:.25rem;font-family:inherit}}
-.modal-close-btn:hover{{background:var(--color-gray-100);color:var(--color-gray-900)}}
+.modal-close-btn{{flex-shrink:0;background:none;border:1px solid var(--color-gray-300);border-radius:.375rem;font-size:1rem;line-height:1;cursor:pointer;color:var(--color-gray-600);padding:.3rem .55rem;font-family:inherit;font-weight:600}}
+.modal-close-btn:hover{{background:var(--color-gray-100);color:var(--color-gray-900);border-color:var(--color-gray-400)}}
 </style>
 </head>
 <body>
@@ -1918,13 +1918,13 @@ body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'I
 <ul class="nav nav-tabs">{nav}</ul>
 <div class="tab-content">{content}</div>
 <div class="modal fade" id="kpiModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content" style="border:1px solid #e6e7e8;position:relative">
-      <button type="button" class="modal-close-btn" data-bs-dismiss="modal" aria-label="Close">&#x2715;</button>
-      <div class="modal-header" style="background:#f8f8f9;border-bottom:1px solid #e6e7e8;padding:.75rem 2.5rem .75rem 1rem">
-        <h6 class="modal-title fw-bold" id="kpiModalTitle" style="color:#16171a;font-size:.9rem"></h6>
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content" style="border:1px solid #e6e7e8">
+      <div class="modal-header" style="background:#f8f8f9;border-bottom:1px solid #e6e7e8;padding:.65rem 1rem;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;min-height:48px">
+        <h6 class="modal-title fw-bold" id="kpiModalTitle" style="color:#16171a;font-size:.9rem;margin:0"></h6>
+        <button type="button" class="modal-close-btn" data-bs-dismiss="modal" aria-label="Close">&#x2715;</button>
       </div>
-      <div class="modal-body p-0" id="kpiModalBody"></div>
+      <div class="modal-body p-0" id="kpiModalBody" style="overflow-y:auto;max-height:calc(100vh - 180px)"></div>
     </div>
   </div>
 </div>
