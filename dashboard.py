@@ -1903,8 +1903,6 @@ body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'I
 .badge-info{{background:var(--color-info-light);color:var(--color-info)}}
 .empty{{color:var(--color-gray-500);font-style:italic;padding:.6rem 0;font-size:.82rem}}
 .table-note{{font-size:.7rem;color:var(--color-gray-500);margin-top:.3rem;text-align:right}}
-.modal-close-btn{{flex-shrink:0;background:none;border:1px solid var(--color-gray-300);border-radius:.375rem;font-size:1rem;line-height:1;cursor:pointer;color:var(--color-gray-600);padding:.3rem .55rem;font-family:inherit;font-weight:600}}
-.modal-close-btn:hover{{background:var(--color-gray-100);color:var(--color-gray-900);border-color:var(--color-gray-400)}}
 </style>
 </head>
 <body>
@@ -1919,12 +1917,8 @@ body{{background:var(--color-gray-50);color:var(--color-gray-900);font-family:'I
 <div class="tab-content">{content}</div>
 <div class="modal fade" id="kpiModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl">
-    <div class="modal-content" style="border:1px solid #e6e7e8">
-      <div class="modal-header" style="background:#f8f8f9;border-bottom:1px solid #e6e7e8;padding:.65rem 1rem;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;min-height:48px">
-        <h6 class="modal-title fw-bold" id="kpiModalTitle" style="color:#16171a;font-size:.9rem;margin:0"></h6>
-        <button type="button" class="modal-close-btn" data-bs-dismiss="modal" aria-label="Close">&#x2715;</button>
-      </div>
-      <div class="modal-body p-0" id="kpiModalBody" style="overflow-y:auto;max-height:calc(100vh - 180px)"></div>
+    <div class="modal-content" style="border:1px solid #e6e7e8;border-radius:.5rem;overflow:hidden">
+      <div id="kpiModalBody" style="overflow-y:auto;max-height:calc(100vh - 120px)"></div>
     </div>
   </div>
 </div>
@@ -1958,8 +1952,12 @@ function _renderKpiTable(key){{
     }}).join('');
     return'<tr>'+cells+'</tr>';
   }}).join('');
+  var closeBtn='<button onclick="bootstrap.Modal.getInstance(document.getElementById(\'kpiModal\')).hide()" style="flex-shrink:0;background:#fff;border:1px solid #d1d2d6;border-radius:.375rem;font-size:1.05rem;line-height:1;cursor:pointer;color:#5a5b63;padding:.3rem .6rem;font-weight:700" title="Close">&#x2715;</button>';
+  var stickyBar='<div style="position:sticky;top:0;z-index:50;background:#f8f8f9;border-bottom:2px solid #e6e7e8;padding:.7rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:1rem">'+
+    '<span style="font-weight:700;font-size:.9rem;color:#16171a">'+d.title+' ('+d.rows.length+' orders)</span>'+
+    closeBtn+'</div>';
   document.getElementById('kpiModalBody').innerHTML=
-    '<div style="overflow-x:auto"><table class="qtable" style="width:100%"><thead>'+th+'</thead><tbody>'+tb+'</tbody></table></div>';
+    stickyBar+'<div style="overflow-x:auto"><table class="qtable" style="width:100%"><thead>'+th+'</thead><tbody>'+tb+'</tbody></table></div>';
   document.querySelectorAll('#kpiModalBody th[data-col]').forEach(function(th){{
     th.addEventListener('click',function(){{_sortKpi(key,parseInt(this.getAttribute('data-col')));}});
   }});
@@ -1971,7 +1969,6 @@ function _sortKpi(key,col){{
 }}
 function showKpi(key){{
   var d=KPI_DATA[key];if(!d)return;
-  document.getElementById('kpiModalTitle').textContent=d.title+' ('+d.rows.length+' orders)';
   _renderKpiTable(key);
   new bootstrap.Modal(document.getElementById('kpiModal')).show();
 }}
