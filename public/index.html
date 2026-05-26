@@ -4794,10 +4794,14 @@ async function submitAddTask(jobId) {
   };
 
   const existingLocs = job.locations || [];
+  // Associates: server appends new tasks to existing (send only the new one).
+  // Managers/admin/office_support: server uses the full list as-is (must include existing).
+  const isAssociate = state.user.role === 'associate';
+  const locsToSend = isAssociate ? [newLoc] : [...existingLocs, newLoc];
   try {
     await apiFetch(`/api/jobs/${jobId}/locations`, {
       method: 'PUT',
-      body: JSON.stringify({ locations: [...existingLocs, newLoc] }),
+      body: JSON.stringify({ locations: locsToSend }),
     });
     document.querySelector('.modal-overlay')?.remove();
     await loadData();
