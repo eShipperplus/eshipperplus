@@ -1546,7 +1546,8 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
     locations.forEach(l => {
       Object.keys(l.referenceData || {}).forEach(k => {
         const norm = k.trim().toLowerCase();
-        if (norm === 'location') return; // skip — "Location" is its own top-level column; don't let refData overwrite it
+        if (!norm) return;            // skip blank/whitespace-only headers (malformed CSV columns)
+        if (norm === 'location') return; // skip — "Location" is its own top-level column
         if (!_refColsSeen.has(norm)) _refColsSeen.set(norm, k.trim());
       });
     });
@@ -1588,7 +1589,8 @@ app.get('/api/jobs/:id/export/locations', requireAuth, async (req, res) => {
       row['Task Status'] = l.status === 'done' ? 'Done' : 'Pending';
       row['Assigned To'] = l.assignedAssocName || '';
       row['Completed At'] = l.completedAt ? new Date(l.completedAt._seconds * 1000).toLocaleString('en-CA') : '';
-      row['Notes'] = l.assocNotes || '';
+      // 'Associate Notes' avoids collision with any CSV column also named 'Notes'
+      row['Associate Notes'] = l.assocNotes || '';
       row['Photos'] = (l.photos || []).join('\n');
       return row;
     });
