@@ -2525,8 +2525,8 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
       if (!targetLocationCode) return res.status(400).json({ error: 'targetLocationCode required for transfer' });
       const { productId, clientId, warehouseId, sourceLocationId, sourceLocationCode, packTypeId, lotBatch, expiry, productionDate, lpn, lpnId } = req.body;
       // Logiwa spec: packTypeIdentifier required; only one of locationIdentifier OR locationCode (not both)
-      // Strip to minimum fields — Logiwa exact-matches ALL provided fields, extra ones cause mismatches
-      const _fmtDate = d => { try { return d ? new Date(d).toISOString().slice(0,10).replace(/-/g,'') : undefined; } catch { return undefined; } };
+      // Strip to minimum fields — Logiwa exact-matches ALL provided fields, extra ones cause mismatches.
+      // Pass expiry/lot through as-is (Logiwa returned them, so their format is what Logiwa expects back).
       const transferPayload = {
         clientIdentifier: clientId || undefined,
         sourceWarehouseIdentifier: warehouseId || undefined,
@@ -2536,7 +2536,7 @@ app.post('/api/logiwa/movement', requireAuth, async (req, res) => {
         targetWarehouseLocationCode: targetLocationCode,
         quantity,
         ...(lotBatch ? { lotBatchNumber: lotBatch } : {}),
-        ...(expiry   ? { expiryDate: _fmtDate(expiry) } : {}),
+        ...(expiry   ? { expiryDate: expiry } : {}),
         ...(lpnId  ? { sourceLicensePlateIdentifier: lpnId } : {}),
         ...(lpn && !lpnId ? { sourceLicensePlateNumber: lpn } : {}),
       };
