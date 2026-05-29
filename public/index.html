@@ -1566,13 +1566,28 @@ function renderManagerQueue() {
       `).join('')}
     </div>` : ''}
     <div class="card">
-      <div class="card-title">Needs Assignment (${unassigned.length})</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="card-title" style="margin:0">Needs Assignment (${unassigned.length})</div>
+        ${unassigned.length ? `<div style="display:flex;gap:8px;align-items:center">
+          <span id="bulk-sel-count" style="font-size:12px;color:var(--text-light)"></span>
+          <select id="bulk-assoc-select" style="padding:6px;border:1px solid var(--border);border-radius:5px;font-size:13px;display:none">
+            <option value="">Select associate…</option>
+            ${myTeamAssocs.map(u=>`<option value="${u.uid}">${u.displayName}</option>`).join('')}
+          </select>
+          <button id="bulk-assign-btn" class="btn btn-primary btn-sm" style="display:none" onclick="submitBulkAssign()">Assign Selected</button>
+        </div>` : ''}
+      </div>
       ${unassigned.length ? unassigned.map(j=>`
         <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-            <div>
-              <div style="font-weight:700">${j.customerId} — ${jobTypeName(j.jobTypeId)}</div>
-              <div style="font-size:12px;color:var(--text-light)">${statusBadge(j.status)} | Created by ${j.createdByName}</div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <input type="checkbox" class="bulk-job-cb" data-job-id="${j.id}"
+                onchange="onBulkCheckChange()"
+                style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary)"/>
+              <div>
+                <div style="font-weight:700">${j.jobNumber ? j.jobNumber+' — ' : ''}${j.customerId} — ${jobTypeName(j.jobTypeId)}</div>
+                <div style="font-size:12px;color:var(--text-light)">${statusBadge(j.status)} | Created by ${j.createdByName}</div>
+              </div>
             </div>
             <div style="display:flex;gap:8px;align-items:center">
               <select id="assoc-${j.id}" style="padding:6px;border:1px solid var(--border);border-radius:5px;font-size:13px">
@@ -4956,25 +4971,22 @@ async function submitMarkLocationDone(jobId, locId) {
     if (result.allDone) toast('All locations done — job submitted for manager review');
     else toast('Location marked done');
 
-    // Offer Logiwa movement if integration is configured and enabled for this job
+    // Auto-open Logiwa transfer modal for associates only.
+    // Managers/techs post to Logiwa manually during the tech-review step — not auto-triggered here.
     try {
-      const lgwStatus = await apiFetch('/api/logiwa/active').catch(()=>null);
-      if (lgwStatus?.ok) {
-        const job = state.data.jobs.find(j => j.id === jobId);
-        const jobType = state.data.jobTypes.find(t => t.id === job?.jobTypeId);
-        const logiwaEnabled = job?.logiwaEnabled != null ? job.logiwaEnabled : (jobType?.logiwa?.enabled || false);
-        if (!logiwaEnabled) { /* Logiwa not enabled for this job — skip */ }
-        else {
-          const loc = (job?.locations || []).find(l => l.id === locId);
-          // Find SKU from referenceData (case-insensitive: 'SKU', 'Kit SKU', etc.)
-          const refData = loc?.referenceData || {};
-          const skuEntry = Object.entries(refData).find(([k]) => /^(kit.?sku|sku)$/i.test(k));
-          const sku = (skuEntry?.[1] || '').trim();
-          // Associates always default to transfer; other roles use job type default
-          const isAssociate = state.user?.role === 'associate';
-          const defaultMovementType = isAssociate ? 'transfer' : (jobType?.logiwa?.movementType || 'add');
-          // Auto-open modal directly — no toast, no extra click
-          openLogiwaMovementModal(jobId, locId, sku, defaultMovementType);
+      if (state.user?.role === 'associate') {
+        const lgwStatus = await apiFetch('/api/logiwa/active').catch(()=>null);
+        if (lgwStatus?.ok) {
+          const job = state.data.jobs.find(j => j.id === jobId);
+          const jobType = state.data.jobTypes.find(t => t.id === job?.jobTypeId);
+          const logiwaEnabled = job?.logiwaEnabled != null ? job.logiwaEnabled : (jobType?.logiwa?.enabled || false);
+          if (logiwaEnabled) {
+            const loc = (job?.locations || []).find(l => l.id === locId);
+            const refData = loc?.referenceData || {};
+            const skuEntry = Object.entries(refData).find(([k]) => /^(kit.?sku|sku)$/i.test(k));
+            const sku = (skuEntry?.[1] || '').trim();
+            openLogiwaMovementModal(jobId, locId, sku, 'transfer');
+          }
         }
       }
     } catch {}
@@ -4996,6 +5008,46 @@ async function assignAssociate(jobId) {
     renderView();
   } catch (err) {
     toast('Error: ' + err.message, 3000);
+  }
+}
+
+// ── Bulk assign selected jobs to one associate ──
+function onBulkCheckChange() {
+  const checked = [...document.querySelectorAll('.bulk-job-cb:checked')];
+  const countEl = document.getElementById('bulk-sel-count');
+  const sel = document.getElementById('bulk-assoc-select');
+  const btn = document.getElementById('bulk-assign-btn');
+  if (!sel || !btn) return;
+  if (checked.length > 0) {
+    if (countEl) countEl.textContent = `${checked.length} selected`;
+    sel.style.display = '';
+    btn.style.display = '';
+  } else {
+    if (countEl) countEl.textContent = '';
+    sel.style.display = 'none';
+    btn.style.display = 'none';
+  }
+}
+
+async function submitBulkAssign() {
+  const checked = [...document.querySelectorAll('.bulk-job-cb:checked')];
+  const sel = document.getElementById('bulk-assoc-select');
+  const assocId = sel?.value;
+  if (!checked.length) { toast('Check at least one job'); return; }
+  if (!assocId) { toast('Select an associate first'); return; }
+  const jobIds = checked.map(cb => cb.dataset.jobId);
+  const btn = document.getElementById('bulk-assign-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Assigning…'; }
+  try {
+    await Promise.all(jobIds.map(id =>
+      apiFetch(`/api/jobs/${id}/assign-associate`, { method: 'PUT', body: JSON.stringify({ associateIds: [assocId] }) })
+    ));
+    toast(`✓ ${jobIds.length} job(s) assigned`);
+    await loadData();
+    renderView();
+  } catch (err) {
+    toast('Error: ' + err.message, 3000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Assign Selected'; }
   }
 }
 
@@ -5831,7 +5883,7 @@ async function submitLogiwaAttributes(jobId) {
 
 // Expose to onclick handlers
 Object.assign(window, {
-  openJobModal, openCompleteModal, submitComplete, assignAssociate,
+  openJobModal, openCompleteModal, submitComplete, assignAssociate, onBulkCheckChange, submitBulkAssign,
   openSubmitReviewModal, submitForReview, openReviewCompleteModal, submitReviewComplete,
   openMyWorkSubmitModal, submitMyWork, renderAssocSubmissions,
   addLocationRow, handleLocationCSV, showAssignLocationsModal, submitAssignLocations,

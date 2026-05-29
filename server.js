@@ -904,7 +904,8 @@ app.put('/api/jobs/:id/locations', requireAuth, async (req, res) => {
     if (!jobSnap.exists) return res.status(404).json({ error: 'Job not found' });
     const job = jobSnap.data();
 
-    const isManagerOrAbove = ['manager', 'admin', 'office_support'].includes(user.role);
+    // office_support can view jobs but cannot modify location/task assignments
+    const isManagerOrAbove = ['manager', 'admin'].includes(user.role);
     const isAssignedAssoc = (job.assignedAssocId || []).includes(uid);
     if (!isManagerOrAbove && !isAssignedAssoc) {
       return res.status(403).json({ error: 'Not authorized to modify tasks on this job' });
